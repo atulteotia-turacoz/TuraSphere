@@ -1,0 +1,61 @@
+# LiveKit SFU for TuraQuant.
+#
+# Ports are deliberately offset from the TuraClickMeet stack (7880/7881/7882)
+# so both products can run at once without touching each other. Inside the
+# container LiveKit still listens on its defaults; docker-compose does the
+# mapping.
+# Signalling only — reached by URL, so remapping this one in docker-compose is
+# harmless (host 7890 -> container 7880).
+port: 7880
+
+rtc:
+  # ⚠️ These two MUST match the HOST ports docker-compose publishes, and must be
+  # mapped 1:1 (7891:7891, 7892:7892). LiveKit puts these numbers straight into
+  # the ICE candidates it advertises, so a remap makes it advertise a port that
+  # belongs to something else — here, the TuraClickMeet stack on 7881/7882.
+  # Symptom: signalling connects fine (101 Switching Protocols, join response
+  # arrives), then every candidate pair reports state "failed" with
+  # requestsSent > 0, responsesReceived 0, and the client sits on "Connecting…"
+  # before giving up. Cost me a full debugging cycle; don't "tidy" these back.
+  tcp_port: 7891
+
+  # Single-port UDP mux. Do NOT also set port_range_start/end here: the range
+  # takes precedence, LiveKit then advertises ICE candidates on ports like
+  # 50069, and docker-compose publishes only one UDP port — same failure mode.
+  udp_port: 7892
+
+  # This stack is now PRODUCTION-ONLY — local dev points at the live SFU via
+  # LIVEKIT_URL instead of running its own (see backend/.env). So this is `true`
+  # unconditionally: LiveKit STUN-detects the server's public address and puts
+  # THAT in its ICE candidates. With `false` it would advertise the container's
+  # private address, browsers would send media somewhere that only exists inside
+  # the VPC, and the room would join with the participant list correct and no
+  # video ever appearing.
+  #
+  # Because this auto-detects, LIVEKIT_NODE_IP is optional — docker-compose only
+  # passes --node-ip when it is set. Leave it unset unless the box has several
+  # public IPs and LiveKit picks the wrong one.
+  use_external_ip: true
+
+# Generated for TuraQuant on 2026-08-05. NOT shared with TuraClickMeet — each
+# product gets its own pair so neither can mint tokens for the other's rooms.
+keys:
+  API9e974731b257: QObizA5m0lAExQr9aO6eHm_jo89l0FjFddHXEO3O2V-8ItOdQUq04A
+
+room:
+  # Off by default in LiveKit: without it the host can mute someone but NOT
+  # unmute them, so a muted participant has to unmute themselves. We enable it
+  # because a board organizer muting a KOL for background noise must be able to
+  # hand the mic back — the alternative is telling them to unmute over a channel
+  # they can't speak on.
+  #
+  # Worth knowing: this lets a host switch someone's mic back ON remotely. It is
+  # the organizer only (room_admin is in their token alone), and every use goes
+  # through our own API which re-checks that.
+  enable_remote_unmute: true
+
+# Required for Egress. The server dispatches recording jobs to egress workers
+# over Redis; without this, starting a recording fails with "no response from
+# servers" because nothing is listening for the job.
+redis:
+  address: redis:6379

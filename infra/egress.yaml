@@ -1,0 +1,27 @@
+# LiveKit Egress — records TuraQuant rooms to MP4.
+#
+# Egress runs headless Chrome, joins the room as an invisible participant,
+# composites the video and writes the file. It finds jobs by subscribing to the
+# same Redis the LiveKit server publishes them to, so both must point at the
+# same instance — and TuraQuant's Redis is its own, on host port 6380, so this
+# stack can never pick up a TuraClickMeet recording job.
+api_key: API9e974731b257
+api_secret: QObizA5m0lAExQr9aO6eHm_jo89l0FjFddHXEO3O2V-8ItOdQUq04A
+
+ws_url: ws://livekit:7880
+
+# Our dev LiveKit speaks ws:// not wss://. Without this Egress refuses to connect.
+insecure: true
+
+redis:
+  address: redis:6379
+
+# Where MP4s land inside the container. docker-compose maps this to
+# backend/uploads/meetings/livekit on the host, alongside the manually uploaded
+# recordings the app already serves.
+log_level: info
+
+# Single-machine development. Raise if you record several rooms at once — each
+# concurrent recording is its own headless Chrome and is memory-hungry.
+cpu_cost:
+  room_composite_cpu_cost: 2

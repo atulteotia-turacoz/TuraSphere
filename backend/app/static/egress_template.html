@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>TuraQuant recording</title>
+<!--
+  Custom LiveKit Egress template.
+
+  Egress launches headless Chrome at this page with ?url=&token=&layout=, the
+  page joins the room as a hidden participant, and Chrome's output is what gets
+  encoded into the MP4. So THIS markup is the recording.
+
+  Why it exists: LiveKit's stock template composites published video tracks only,
+  so a participant with their camera off was simply absent from the recording —
+  no tile, no name — even though the live room showed them. This template mirrors
+  our in-app grid instead: initials avatar when the camera is off, name label,
+  mic state, and a ring on whoever is speaking.
+
+  Protocol contract with egress:
+    * log START_RECORDING once the page is ready to be captured;
+    * log END_RECORDING when the room ends, so egress finalises the file.
+  Egress waits for START_RECORDING before it begins encoding, so a page that
+  never logs it produces an empty recording.
+-->
+<script src="https://unpkg.com/livekit-client@2.20.1/dist/livekit-client.umd.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; background: #0b1220; overflow: hidden;
+               font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  #stage { width: 100vw; height: 100vh; display: grid; gap: 10px; padding: 10px; }
+  .tile { position: relative; background: #1f2937; border-radius: 12px; overflow: hidden;
+          display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; }
+  .tile.speaking { box-shadow: inset 0 0 0 4px #10B981; }
+  .tile video { width: 100%; height: 100%; object-fit: cover; }
+  .avatar { border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            color: #fff; font-weight: 700; letter-spacing: 1px; user-select: none;
+            width: 26%; aspect-ratio: 1; min-width: 64px; max-width: 180px; }
+  .label { position: absolute; left: 12px; bottom: 12px; display: flex; align-items: center; gap: 6px;
+           background: rgba(17,24,39,.78); color: #fff; border-radius: 8px;
+           padding: 5px 10px; font-size: 15px; max-width: calc(100% - 24px); }
+  .label .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muted { color: #f87171; }
+  /* Screen share takes the stage; everyone else drops to a filmstrip below. */
+  #stage.share { grid-template-columns: 1fr; grid-template-rows: 1fr 132px; }
+  #strip { display: flex; gap: 10px; overflow: hidden; }
+  #strip .tile { width: 210px; flex: 0 0 auto; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+           color: #64748b; font-size: 20px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="empty">Waiting for participants…</div>
+<!--
+  Egress records what this PAGE plays, so every audio track has to be attached to
+  a real, unmuted, playing element or the recording is silent. The <video> tiles
+  are deliberately muted (their audio arrives as separate microphone tracks), so
+  without this container there is no sound in the MP4 at all.
+-->
+<div id="audio-sinks" style="display:none"></div>
+
+<script>
+(function () {
+  var LK = window.LivekitClient;
+  var qs = new URLSearchParams(window.location.search);
+  var wsUrl = qs.get('url');
+  var token = qs.get('token');
+
+  var stage = document.getElementById('stage');
+  var emptyEl = document.getElementById('empty');
+  // Keeps <video> elements alive across re-renders. Re-attaching a track on
+  // every layout pass makes the recording flicker, so elements are reused and
+  // only moved in the DOM.
+  var videoEls = {};
+
+  var COLORS = ['#4F46E5','#0EA5E9','#059669','#D97706','#DC2626','#7C3AED','#DB2777','#0891B2'];
+  function colorFor(name) {
+    var h = 0, s = String(name || '');
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return COLORS[h % COLORS.length];
+  }
+  function initials(name) {
+    var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    var a = parts[0][0] || '';
+    var b = parts.length > 1 ? (parts[parts.length - 1][0] || '') : '';
+    return (a + b).toUpperCase();
+  }
+
+  function pubOf(p, source) {
+    try { return p.getTrackPublication(source); } catch (e) { return null; }
+  }
+
+  function tileFor(p, key) {
+    var cam = pubOf(p, LK.Track.Source.Camera);
+    var mic = pubOf(p, LK.Track.Source.Microphone);
+    var name = p.name || p.identity || 'Guest';
+
+    var el = document.createElement('div');
+    el.className = 'tile' + (p.isSpeaking && mic && !mic.isMuted ? ' speaking' : '');
+
+    if (cam && cam.track && !cam.isMuted) {
+      var v = videoEls[key];
+      if (!v) { v = document.createElement('video'); v.autoplay = true; v.muted = true;
+                v.playsInline = true; videoEls[key] = v; cam.track.attach(v); }
+      el.appendChild(v);
+    } else {
+      // Camera off — this is the case the stock template drops entirely.
+      if (videoEls[key]) { try { videoEls[key].remove(); } catch (e) {} delete videoEls[key]; }
+      var av = document.createElement('div');
+      av.className = 'avatar';
+      av.style.background = colorFor(name);
+      av.style.fontSize = 'clamp(20px, 9vw, 64px)';
+      av.textContent = initials(name);
+      el.appendChild(av);
+    }
+
+    var lab = document.createElement('div');
+    lab.className = 'label';
+    lab.innerHTML = '<span class="' + (mic && !mic.isMuted ? '' : 'muted') + '">'
+                  + (mic && !mic.isMuted ? '&#9679;' : '&#10005;') + '</span>'
+                  + '<span class="nm"></span>';
+    lab.querySelector('.nm').textContent = name;
+    el.appendChild(lab);
+    return el;
+  }
+
+  function render(room) {
+    var people = [room.localParticipant].concat(Array.from(room.remoteParticipants.values()))
+      // Service participants, not people: EG_* is this recorder, livetx-* the
+      // live transcriber. Neither should ever be a tile in the recording.
+      .filter(function (p) { return p && !/^(EG_|livetx-)/.test(p.identity || ''); });
+
+    emptyEl.style.display = people.length ? 'none' : 'flex';
+
+    var sharer = people.filter(function (p) {
+      var s = pubOf(p, LK.Track.Source.ScreenShare);
+      return s && s.track && !s.isMuted;
+    })[0];
+
+    stage.innerHTML = '';
+    if (sharer) {
+      stage.className = 'share';
+      stage.style.gridTemplateColumns = '1fr';
+      var shareTile = document.createElement('div');
+      shareTile.className = 'tile';
+      var sp = pubOf(sharer, LK.Track.Source.ScreenShare);
+      var sv = videoEls['share'];
+      if (!sv) { sv = document.createElement('video'); sv.autoplay = true; sv.muted = true;
+                 sv.playsInline = true; videoEls['share'] = sv; sp.track.attach(sv); }
+      sv.style.objectFit = 'contain';
+      shareTile.appendChild(sv);
+      stage.appendChild(shareTile);
+
+      var strip = document.createElement('div');
+      strip.id = 'strip';
+      people.forEach(function (p, i) { strip.appendChild(tileFor(p, p.sid || ('p' + i))); });
+      stage.appendChild(strip);
+    } else {
+      if (videoEls['share']) { try { videoEls['share'].remove(); } catch (e) {} delete videoEls['share']; }
+      stage.className = '';
+      var n = Math.max(people.length, 1);
+      var cols = Math.min(3, Math.ceil(Math.sqrt(n)));
+      stage.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 1fr))';
+      stage.style.gridTemplateRows = 'repeat(' + Math.ceil(n / cols) + ', minmax(0, 1fr))';
+      people.forEach(function (p, i) { stage.appendChild(tileFor(p, p.sid || ('p' + i))); });
+    }
+  }
+
+  // ── Audio ────────────────────────────────────────────────────────────────
+  // Kept entirely separate from the tile rendering: tiles are rebuilt on every
+  // repaint, and tearing an <audio> element out of the DOM mid-render would cut
+  // the sound. These elements are created once per track and only removed when
+  // the track actually goes away.
+  var audioSinks = document.getElementById('audio-sinks');
+  var audioEls = {};
+
+  function attachAudio(track, sid) {
+    if (!track || audioEls[sid]) return;
+    var el = track.attach();          // gives an <audio> wired to this track
+    el.autoplay = true;
+    el.muted = false;                 // the whole point — muted here means a silent MP4
+    audioSinks.appendChild(el);
+    audioEls[sid] = { el: el, track: track };
+    // Headless Chrome should autoplay, but a rejected play() would silently cost
+    // us the audio, so surface it rather than losing it quietly.
+    var p = el.play && el.play();
+    if (p && p.catch) p.catch(function (e) { console.error('audio play blocked:', e); });
+  }
+
+  function detachAudio(sid) {
+    var entry = audioEls[sid];
+    if (!entry) return;
+    try { entry.track.detach(entry.el); } catch (e) {}
+    try { entry.el.remove(); } catch (e) {}
+    delete audioEls[sid];
+  }
+
+  var room = new LK.Room({ adaptiveStream: false, dynacast: false });
+
+  // Audio is driven by track events rather than the render pass, so it survives
+  // every repaint. Covers the microphone and screen-share audio.
+  room.on('trackSubscribed', function (track, pub, participant) {
+    if (track.kind === 'audio' && !/^(EG_|livetx-)/.test(participant.identity || '')) {
+      attachAudio(track, pub.trackSid);
+    }
+  });
+  room.on('trackUnsubscribed', function (track, pub) {
+    if (track.kind === 'audio') detachAudio(pub.trackSid);
+  });
+  var scheduled = false;
+  function schedule() {
+    // Speaker changes fire rapidly; coalesce into one repaint per frame so the
+    // recording doesn't thrash the DOM.
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(function () { scheduled = false; render(room); });
+  }
+
+  ['participantConnected','participantDisconnected','trackSubscribed','trackUnsubscribed',
+   'trackMuted','trackUnmuted','localTrackPublished','localTrackUnpublished',
+   'activeSpeakersChanged'].forEach(function (ev) { room.on(ev, schedule); });
+
+  room.on('disconnected', function () { console.log('END_RECORDING'); });
+
+  room.connect(wsUrl, token, { autoSubscribe: true }).then(function () {
+    render(room);
+    // Tell egress we are ready. Without this it never starts encoding.
+    console.log('START_RECORDING');
+  }).catch(function (e) {
+    console.error('recorder failed to join:', e);
+    console.log('END_RECORDING');
+  });
+})();
+</script>
+</body>
+</html>

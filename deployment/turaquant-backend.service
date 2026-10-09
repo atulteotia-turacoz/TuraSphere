@@ -1,0 +1,22 @@
+[Unit]
+Description=TuraQuant Backend (FastAPI/Uvicorn)
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/turaquant/backend
+EnvironmentFile=/var/www/turaquant/backend/.env
+ExecStart=/var/www/turaquant/backend/venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 4 \
+    --log-level info
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

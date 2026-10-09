@@ -1,0 +1,89 @@
+# LiveKit stack for TuraQuant — the SFU that carries audio/video/screen-share
+# when a meeting's provider is `livekit` rather than `zoom`.
+#
+#   docker compose up -d
+#
+# MySQL is NOT here on purpose — it already runs on the host.
+#
+# ── Isolation from TuraClickMeet ──────────────────────────────────────────────
+# TuraClickMeet runs its own LiveKit stack on 7880/7881/7882 with Redis on 6379.
+# Every published port here is offset so both products run at once, and the
+# compose project names differ (turaquant-* vs turaclickmeet-*), so containers,
+# networks and volumes never collide. Each stack has its OWN key pair and its
+# OWN Redis — sharing Redis would let one product's egress workers pick up the
+# other's recording jobs.
+services:
+  livekit:
+    # Must stay in step with `livekit-client` in frontend/package.json. A client
+    # newer than the server negotiates a protocol the server does not implement:
+    # ICE completes and the server reports "participant active", but the
+    # browser's peer connection never reaches `connected`, so it tears down
+    # after its 15s peerConnectionTimeout and full-reconnects forever. The tell
+    # in the logs is `unsupported datachannel added ... label: "_data_track"`.
+    image: livekit/livekit-server:v1.10
+    # --node-ip is passed ONLY when LIVEKIT_NODE_IP is non-empty (`:+` expands to
+    # nothing otherwise). Unset is the normal case: `use_external_ip: true` in
+    # infra/livekit.yaml makes LiveKit STUN-detect its own public address, which
+    # is the right answer on the server and needs no maintenance.
+    #
+    # The old default was `:-127.0.0.1`, which is a trap — an unset variable then
+    # silently produced a server advertising loopback, i.e. media that never
+    # connects, with signalling still working perfectly. Set this only to force a
+    # specific address on a multi-homed box.
+    command: --config /etc/livekit.yaml ${LIVEKIT_NODE_IP:+--node-ip ${LIVEKIT_NODE_IP}}
+    restart: unless-stopped
+    ports:
+      # Signalling is reached by URL, so remapping is fine here. Bound to
+      # localhost so nginx (which terminates TLS for livekit.turaquant.turacoz.com)
+      # is the only way in — otherwise plaintext ws:// on :7890 is reachable from
+      # the internet and TLS can simply be bypassed.
+      - "127.0.0.1:7890:7880"   # HTTP + WebSocket signalling
+      # ⚠️ The media ports must be 1:1. LiveKit writes these numbers into the ICE
+      # candidates it advertises, so a remap (7891:7881) makes it tell browsers
+      # to send media to 7881 — which on this host is the TuraClickMeet stack.
+      # Signalling then succeeds while media silently never connects.
+      - "7891:7891"       # TCP fallback for WebRTC
+      - "7892:7892/udp"   # primary WebRTC media
+    volumes:
+      - ./infra/livekit.yaml:/etc/livekit.yaml:ro
+
+  # Records rooms to MP4. Joins as a hidden participant, composites the video,
+  # and writes into backend/uploads/meetings/livekit — the same uploads tree the
+  # API already serves manually uploaded recordings from.
+  egress:
+    image: livekit/egress:v1.9
+    restart: unless-stopped
+    depends_on:
+      - livekit
+      - redis
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    # `host.docker.internal` does not exist on Linux — Docker Desktop provides it,
+    # a plain Linux server does not. Without this mapping egress cannot fetch our
+    # recording layout from EGRESS_TEMPLATE_BASE_URL and silently falls back to
+    # LiveKit's stock template, which omits camera-off participants entirely.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./infra/egress.yaml:/etc/egress.yaml:ro
+      - ./backend/uploads/meetings/livekit:/out
+    # Headless Chrome needs both of these. Without SYS_ADMIN its sandbox cannot
+    # start; without the larger /dev/shm it crashes part-way through a recording.
+    cap_add:
+      - SYS_ADMIN
+    shm_size: 1gb
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      # Localhost-only: only livekit and egress use this, and they reach it over
+      # the compose network as `redis:6379`, never through this published port.
+      # Publishing it on 0.0.0.0 put an unauthenticated Redis on the public
+      # internet. 6379 is TuraClickMeet's, hence 6380.
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
