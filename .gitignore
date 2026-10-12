@@ -1,0 +1,15 @@
+
+# Environment files
+/frontend/.env
+/frontend/.env.production
+/admin/.env
+/admin/.env.production
+/backend/.env
+/backend/.env.production
+
+# Python virtual environment
+/myenv/
+
+# Deployment and documentation files
+/docker-compose.yaml
+/livekit.md
