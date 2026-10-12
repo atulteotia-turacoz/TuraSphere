@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="TuraSphere">
+  <!-- The sphere from the TuraSphere logotype — the "o" of turasphere. At 16px a
+       letterform is unreadable, but the sphere still reads as the mark.
+       Stops and highlight position are sampled from the artwork, not guessed:
+       the highlight sits up and right of centre at ~29% / -23% of the radius. -->
+  <defs>
+    <radialGradient id="ts" cx="64.5%" cy="38.5%" r="72%">
+      <stop offset="0%"   stop-color="#FDE69F"/>
+      <stop offset="22%"  stop-color="#FCD876"/>
+      <stop offset="45%"  stop-color="#FAC541"/>
+      <stop offset="70%"  stop-color="#F9B116"/>
+      <stop offset="100%" stop-color="#F39814"/>
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="url(#ts)"/>
+</svg>

@@ -48,6 +48,22 @@ _CC_TLD = re.compile(r"\.([a-z]{2})$")
 _COUNTRY_TLD = {"india": "in", "united states": "us", "united kingdom": "uk", "canada": "ca", "australia": "au",
                 "singapore": "sg", "united arab emirates": "ae", "germany": "de", "france": "fr", "japan": "jp",
                 "south africa": "za"}
+# How each registry spells a country, where it differs from the name we store:
+# PubMed affiliations say "USA" / "Korea", ClinicalTrials.gov "Korea, Republic of".
+_COUNTRY_ALIASES = {
+    "united states": ["USA", "United States", "U.S.A"],
+    "united kingdom": ["UK", "United Kingdom"],
+    "south korea": ["Korea"],
+    "czech republic": ["Czech Republic", "Czechia"],
+    "czechia": ["Czech Republic", "Czechia"],
+    "vietnam": ["Vietnam", "Viet Nam"],
+    "united arab emirates": ["United Arab Emirates", "UAE"],
+}
+# ClinicalTrials.gov's location search is literal — its own spelling of the country.
+_CTGOV_COUNTRY = {"south korea": "Korea, Republic of", "czech republic": "Czechia"}
+# Places that write the country into their address without being in it
+# ("Hong Kong SAR, China", "Taipei, Taiwan, Republic of China").
+_COUNTRY_EXCLUDE = {"china": ["Hong Kong", "Taiwan", "Macau", "Macao"]}
 _DEGREES = re.compile(r",.*$|\b(MD|MBBS|MS|DM|DNB|PhD|FRCP\w*|MRCP|FACS|FICS|MCh|DGO|MPH)\b\.?", re.I)
 _TITLES = re.compile(r"^\s*(dr|prof|professor|mr|mrs|ms)\.?\s+", re.I)
 
@@ -95,8 +111,21 @@ def _split_affiliation(aff: str) -> Dict[str, Optional[str]]:
 
 
 def _mentions_place(text: str, places: List[str]) -> bool:
+    # Whole words only — a bare substring check reads "Women's Hospital" as Oman,
+    # "Indiana" as India and "Perugia" as Peru.
     low = _norm(text)
-    return any(_norm(p) in low for p in places)
+    return any(re.search(rf"\b{re.escape(_norm(p))}\b", low) for p in places if _norm(p).strip())
+
+
+def _country_names(country: str) -> List[str]:
+    return _COUNTRY_ALIASES.get((country or "").strip().lower()) or [country.strip()]
+
+
+def _in_country(text: str, country: str) -> bool:
+    """`text` (an affiliation / site address) is in `country`, under any spelling."""
+    if not _mentions_place(text, _country_names(country)):
+        return False
+    return not _mentions_place(text, _COUNTRY_EXCLUDE.get(country.strip().lower(), []))
 
 
 # ── PubMed ───────────────────────────────────────────────────────
@@ -114,7 +143,7 @@ def pubmed_candidates(criteria, notes: List[str], api_key: str = "",
         notes.append("PubMed skipped — set a City, State or Country to search authors there.")
         return []
     # Affiliation-tagged place narrows the papers; each author is still checked below.
-    where = places or [country]
+    where = places or _country_names(country)
     topics = " OR ".join(f"({t})" for t in _terms(criteria, keywords))
     term = f"({topics}) AND (" + " OR ".join(f'"{p}"[Affiliation]' for p in where) + ")"
     # Drop animal-only studies (veterinary colleges publish "gynaecology" too) while
@@ -143,8 +172,9 @@ def pubmed_candidates(criteria, notes: List[str], api_key: str = "",
             if resp.status_code != 200:
                 continue
             for art in ElementTree.fromstring(resp.text).findall(".//PubmedArticle"):
-                _collect_authors(art, places or [country], people)
-    notes.append(f"PubMed: {result.get('count', 0)} papers on “{topic}” from {', '.join(where)} "
+                _collect_authors(art, (lambda a: _mentions_place(a, places)) if places
+                                 else (lambda a: _in_country(a, country)), people)
+    notes.append(f"PubMed: {result.get('count', 0)} papers on “{topic}” from {', '.join(places or [country])} "
                  f"in the last 5 years — read authors from the newest {len(ids)}.")
 
     # Contactable first, then the most published.
@@ -180,7 +210,7 @@ def pubmed_candidates(criteria, notes: List[str], api_key: str = "",
     return out
 
 
-def _collect_authors(art, places: List[str], people: Dict[str, Dict]) -> None:
+def _collect_authors(art, in_place, people: Dict[str, Dict]) -> None:
     pmid = art.findtext(".//PMID", "")
     title = (art.findtext(".//ArticleTitle") or "").strip()
     year = art.findtext(".//PubDate/Year") or (art.findtext(".//PubDate/MedlineDate") or "")[:4]
@@ -191,7 +221,7 @@ def _collect_authors(art, places: List[str], people: Dict[str, Dict]) -> None:
         if not last or not re.match(r"[A-Za-z]{2,}", fore):
             continue
         affs = " ".join(a.text or "" for a in au.findall(".//AffiliationInfo/Affiliation"))
-        if not _mentions_place(affs, places) or _NOT_CLINICAL.search(affs):
+        if not in_place(affs) or _NOT_CLINICAL.search(affs):
             continue
         key = f"{last} {fore.split()[0]}".lower()
         p = people.setdefault(key, {"last": last, "fore": fore, "count": 0, "email": None,
@@ -227,7 +257,8 @@ def ctgov_candidates(criteria, notes: List[str], keywords: Optional[List[str]] =
         return []
     # The registry's location search is literal: "New Delhi" finds a fifth of what
     # "Delhi" does — search the normalised name.
-    locn = ", ".join(re.sub(r"(?i)^new\s+", "", x.strip()) for x in (criteria.city or criteria.state, country)
+    locn = ", ".join(re.sub(r"(?i)^new\s+", "", x.strip())
+                     for x in (criteria.city or criteria.state, _CTGOV_COUNTRY.get(country.lower(), country))
                      if (x or "").strip())
     cond = " OR ".join(f'"{t}"' if " " in t else t for t in _terms(criteria, keywords))
     svc = ClinicalTrialsService()
@@ -245,7 +276,7 @@ def ctgov_candidates(criteria, notes: List[str], keywords: Optional[List[str]] =
     notes.append(f"ClinicalTrials.gov: {len(studies)} trial{'s' if len(studies) != 1 else ''} on “{topic}” in {locn}.")
 
     def at_place(text: str) -> bool:
-        return _mentions_place(text, places) if places else country.lower() in (text or "").lower()
+        return _mentions_place(text, places) if places else _in_country(text, country)
 
     india = (country or "india").lower() == "india"
     people: Dict[str, Dict] = {}
@@ -287,7 +318,7 @@ def ctgov_candidates(criteria, notes: List[str], keywords: Optional[List[str]] =
             # Country-only counts only when the affiliation names no city at all — a
             # "…, Chennai, India" investigator on a multi-city trial is not local.
             local = at_place(aff) or (locs and aff and (
-                ((country or "india").lower() in aff.lower() and aff.count(",") <= 1)
+                (_in_country(aff, country or "India") and aff.count(",") <= 1)
                 or any(f and (aff.lower() in f or f in aff.lower()) for f in facilities)))
             if local:
                 add(o.get("name"), nct, title, (o.get("role") or "").upper(),
@@ -299,7 +330,7 @@ def ctgov_candidates(criteria, notes: List[str], keywords: Optional[List[str]] =
         # Central contacts speak for the whole trial — only take them when every
         # site is in the country (a multinational's contact sits abroad).
         all_locs = cl.get("locations") or []
-        domestic = all_locs and all((country or "india").lower() in (l.get("country") or "").lower() for l in all_locs)
+        domestic = all_locs and all(_in_country(l.get("country") or "", country or "India") for l in all_locs)
         if locs and domestic:
             for c in cl.get("centralContacts") or []:
                 add(c.get("name"), nct, title, (c.get("role") or "").upper(), None, c.get("email"), c.get("phone"))

@@ -818,26 +818,80 @@ def enrich_pending(entry_id: int, background: BackgroundTasks,
 
 # ── 3. Review the pending queue ──────────────────────────────────
 
-@router.get("/pending", response_model=PendingListResponse)
-def list_pending(
-    status: Optional[str] = Query(None, pattern="^(pending|approved|rejected)$"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+def _pending_scope(db: Session, current_user: User):
     query = db.query(KOLPendingEntry)
     # Users see their own submissions; admins see everyone's.
     if not _is_admin(current_user):
         query = query.filter(KOLPendingEntry.user_id == current_user.id)
+    return query
+
+
+def _pending_page(db: Session, current_user: User, status: Optional[str] = None,
+                  skip: int = 0, limit: Optional[int] = None, search: Optional[str] = None,
+                  source: Optional[str] = None, therapeutic_area: Optional[str] = None,
+                  geographic_zone: Optional[str] = None) -> dict:
+    query = _pending_scope(db, current_user)
+    if source:
+        query = query.filter(KOLPendingEntry.source == source)
+    if therapeutic_area:
+        query = query.filter(KOLPendingEntry.therapeutic_area == therapeutic_area)
+    if geographic_zone:
+        query = query.filter(KOLPendingEntry.geographic_zone == geographic_zone)
+    if (search or "").strip():
+        like = f"%{search.strip()}%"
+        query = query.filter(or_(
+            func.concat_ws(" ", KOLPendingEntry.first_name, KOLPendingEntry.last_name).ilike(like),
+            KOLPendingEntry.x_name.ilike(like), KOLPendingEntry.x_username.ilike(like),
+            KOLPendingEntry.email.ilike(like), KOLPendingEntry.institution.ilike(like),
+        ))
+    # `pending` counts the pending rows under the same source/area/country/search
+    # filters, whatever status tab is open.
+    pending = query.filter(KOLPendingEntry.status == "pending").count()
     if status:
         query = query.filter(KOLPendingEntry.status == status)
+    total = query.count()
+    items = query.order_by(KOLPendingEntry.created_at.desc(), KOLPendingEntry.id.desc())
+    # No limit = the whole list (the original behaviour); a bulk import makes the
+    # queue far too long for that, so the panel asks for a page at a time.
+    if limit:
+        items = items.offset(skip).limit(limit)
+    return {"total": total, "pending": pending, "items": items.all()}
 
-    scope = query
-    total = scope.count()
-    pending = scope.filter(KOLPendingEntry.status == "pending").count() if not status \
-        else (total if status == "pending" else
-              query.filter(KOLPendingEntry.status == "pending").count())
-    items = query.order_by(KOLPendingEntry.created_at.desc()).all()
-    return {"total": total, "pending": pending, "items": items}
+
+@router.get("/pending", response_model=PendingListResponse)
+def list_pending(
+    status: Optional[str] = Query(None, pattern="^(pending|approved|rejected)$"),
+    skip: int = Query(0, ge=0),
+    limit: Optional[int] = Query(None, ge=1, le=1000),
+    search: Optional[str] = None,
+    source: Optional[str] = None,
+    therapeutic_area: Optional[str] = None,
+    geographic_zone: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _pending_page(db, current_user, status, skip, limit, search, source, therapeutic_area, geographic_zone)
+
+
+@router.get("/pending/facets")
+def pending_facets(
+    status: Optional[str] = Query(None, pattern="^(pending|approved|rejected)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Distinct source / therapeutic area / country values in the queue, with counts,
+    for the Pending Verification filters."""
+    scope = _pending_scope(db, current_user)
+    if status:
+        scope = scope.filter(KOLPendingEntry.status == status)
+    out = {}
+    for key, col in (("source", KOLPendingEntry.source),
+                     ("therapeutic_area", KOLPendingEntry.therapeutic_area),
+                     ("geographic_zone", KOLPendingEntry.geographic_zone)):
+        rows = (scope.with_entities(col, func.count()).filter(col.isnot(None), col != "")
+                .group_by(col).order_by(col).all())
+        out[key] = [{"value": v, "count": n} for v, n in rows]
+    return out
 
 
 def _get_pending(entry_id: int, db: Session, current_user: User) -> KOLPendingEntry:
@@ -970,7 +1024,8 @@ def approve_bulk(data: BulkReview, db: Session = Depends(get_db),
             # Missing, already approved, or not this user's — skip, approve the rest.
             if exc.status_code not in (403, 404, 409):
                 raise
-    return list_pending(status=None, db=db, current_user=current_user)
+    # The caller reloads its own page; the first page here keeps the response small.
+    return _pending_page(db, current_user, limit=100)
 
 
 @router.post("/pending/{entry_id}/find-page", response_model=PendingResponse)
