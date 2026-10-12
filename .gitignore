@@ -13,3 +13,6 @@
 # Deployment and documentation files
 /docker-compose.yaml
 /livekit.md
+
+# Docker Compose
+/docker-compose.yml
