@@ -13,6 +13,10 @@ class AssessmentParameter(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     max_score = Column(Float, default=0)
+    # Tiers of one criterion share a group; their scores add up to at most
+    # group_max_score (see app/services/parameter_groups.py).
+    score_group = Column(String(50), nullable=True)
+    group_max_score = Column(Float, nullable=True)
     is_active = Column(Boolean, default=True)
     is_standard = Column(Boolean, default=True)  # True = system/admin param, False = user-created
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # NULL = system-seeded

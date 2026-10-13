@@ -17,3 +17,22 @@ Bulk run of the Find-KOLs scrape for 23 therapeutic areas × 51 countries (1,173
 | `backend/app/services/research_kols.py` | Word-boundary `_mentions_place`. New `_COUNTRY_ALIASES`, `_CTGOV_COUNTRY`, `_COUNTRY_EXCLUDE`, `_country_names` and `_in_country`. PubMed searches and checks every spelling of the country; `_collect_authors` takes a matcher. CT.gov uses the registry's country name and `_in_country` for site, official and domestic checks. |
 | `backend/app/api/endpoints/kol_scrape.py` | `_pending_scope` and `_pending_page` helpers. `list_pending` gets paging and filters. New `GET /pending/facets`. `approve_bulk` returns the first page. |
 
+## Assessment parameters — Excel scoring, score groups, assessment out of 50 (2026-10-13)
+
+Parameter scores now follow `parameters (1).xlsx`. Tiers of one criterion (1-5 / 5-10 / 10+ engagements, PageRank top 10% / 25%, …) are in a **score group** and count together up to the group total, so an HCP who matches several tiers cannot collect each of them. All 48 standard parameters together give a full scale of **50**.
+
+Groups: `C2_SPEAKING` (4), `C3_ARTICLES` (3), `C5_PUBS_PER_YEAR` (3), `C6_NETWORK` (2), `C7_TRIALS` (2), `C8_GUIDELINES` (2), `C10_PRACTO` (1).
+
+**Schema:** two new nullable columns on `assessment_parameters`: `score_group VARCHAR(50)` and `group_max_score FLOAT`. The backend adds them on start; `assessment_parameters.sql` adds them too.
+
+**Data:** run `deployment/transfer/assessment_parameters.sql` (see `04_DATABASE_QUERIES.sql`).
+
+**Existing assessments** keep their stored `final_score` until they are re-assessed or a parameter score is overridden. Both of those re-total with the caps.
+
+| File | Change |
+|---|---|
+| `backend/app/services/parameter_groups.py` | **New.** `capped_totals` (applies group caps, returns total, max and per-category totals), `param_group_map`, `full_scale` (the "out of" figure: 50 for the standard set). |
+| `backend/app/models/assessment_parameter.py` | Columns `score_group`, `group_max_score`. |
+| `backend/app/api/endpoints/assessment_parameters.py` | `score_group` / `group_max_score` on every create/update/out schema and the user list/custom endpoints. |
+| `backend/app/api/endpoints/assessment.py` | Assessment total and the manual-override re-total use `capped_totals`. `GET /{hcp_id}/parameter-scores` also returns `max_possible`, `category_totals`, and `score_group` / `group_max_score` on each row. |
+| `backend/app/main.py` | Startup migration adds the two columns. Default seed list matches the Excel: max scores, groups, and the 2 new parameters `MEDICAL_REGISTRATION_NO`, `GOVERNMENT_ORGANISATION`. |

@@ -17,6 +17,7 @@ from app.models.assessment import Assessment
 from app.models.audit_log import AuditLog
 from app.models.assessment_parameter import AssessmentParameter, UserParameterPreference
 from app.models.assessment_score import AssessmentParameterScore
+from app.services.parameter_groups import capped_totals, param_group_map, full_scale
 from app.schemas.assessment import ManualScoreInput, AssessmentResponse
 from app.services.scoring_engine import ScoringEngine
 from app.services.pubmed_service import PubMedService
@@ -312,6 +313,8 @@ async def score_with_ai(
                 "category": p.category,
                 "description": p.description,
                 "max_score": p.max_score,
+                "score_group": p.score_group,
+                "group_max_score": p.group_max_score,
                 "scoring_source": p.scoring_source or "cv",
             })
 
@@ -556,9 +559,16 @@ async def score_with_ai(
         profile_data["linkedin_url"] = linkedin_data["profile_url"]
         profile_data["linkedin_headline"] = linkedin_data.get("headline")
 
-    # Calculate total score
-    total_score = sum(ps["score"] for ps in param_scores_out)
-    max_possible = sum(ps["max_score"] for ps in param_scores_out)
+    # Calculate total score. Tiers of one criterion share a group and count
+    # together up to the group's cap, so the standard set totals 50.
+    _groups = {p["id"]: (p["score_group"], p["group_max_score"]) for p in enabled_params}
+    total_score, _, _ = capped_totals([
+        {"score": ps["score"], "max_score": ps["max_score"],
+         "score_group": _groups.get(ps["parameter_id"], (None, None))[0],
+         "group_max_score": _groups.get(ps["parameter_id"], (None, None))[1]}
+        for ps in param_scores_out
+    ])
+    max_possible = full_scale(db, current_user.id)
     tier = ScoringEngine.determine_tier(total_score, db=db, user_id=hcp.user_id)
 
     # Build scoring method summary
@@ -702,6 +712,14 @@ def get_parameter_scores(
     scores = db.query(AssessmentParameterScore).filter(
         AssessmentParameterScore.assessment_id == assessment.id
     ).all()
+    groups = param_group_map(db, [s.parameter_id for s in scores])
+    hcp = db.query(HCPProfile).filter(HCPProfile.id == hcp_id).first()
+    _, _, category_totals = capped_totals([
+        {"score": s.score, "max_score": s.max_score, "category": s.parameter_category,
+         "score_group": groups.get(s.parameter_id, (None, None))[0],
+         "group_max_score": groups.get(s.parameter_id, (None, None))[1]}
+        for s in scores
+    ])
 
     return {
         "assessment_id": assessment.id,
@@ -715,6 +733,10 @@ def get_parameter_scores(
         # earlier date.
         "created_at": assessment.created_at.isoformat() + "Z" if assessment.created_at else None,
         "scoring_meta": json.loads(assessment.confidence_flags) if assessment.confidence_flags else {},
+        # The "out of" figure (50 for the standard set) and per-category totals
+        # with group caps applied — summing max_score row by row double-counts tiers.
+        "max_possible": full_scale(db, hcp.user_id if hcp else None),
+        "category_totals": category_totals,
         "parameter_scores": [
             {
                 "id": s.id,
@@ -724,6 +746,8 @@ def get_parameter_scores(
                 "parameter_category": s.parameter_category,
                 "score": s.score,
                 "max_score": s.max_score,
+                "score_group": groups.get(s.parameter_id, (None, None))[0],
+                "group_max_score": groups.get(s.parameter_id, (None, None))[1],
                 "justification": s.justification,
                 "scoring_source": s.scoring_source or "cv",
                 "source_data": json.loads(s.source_data) if s.source_data else None,
@@ -945,7 +969,13 @@ def override_parameter_score(
     rows = db.query(AssessmentParameterScore).filter(
         AssessmentParameterScore.assessment_id == assessment.id
     ).all()
-    total = sum(float(r.score or 0) for r in rows)
+    groups = param_group_map(db, [r.parameter_id for r in rows])
+    total, _, _ = capped_totals([
+        {"score": r.score, "max_score": r.max_score,
+         "score_group": groups.get(r.parameter_id, (None, None))[0],
+         "group_max_score": groups.get(r.parameter_id, (None, None))[1]}
+        for r in rows
+    ])
     assessment.final_score = round(total, 1)
     assessment.tier = ScoringEngine.determine_tier(
         total, db=db, user_id=hcp.user_id if hcp else None

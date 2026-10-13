@@ -382,6 +382,8 @@ export default function ResultsPage() {
       grandScore += ps.score || 0;
       grandMax += ps.max_score || 0;
     });
+    // Tiers in a score group are capped together; the backend sends the capped figures.
+    if (paramScores.max_possible) grandMax = paramScores.max_possible;
 
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const tier = (assessment?.tier || '').replace(/_/g, ' ');
@@ -390,8 +392,9 @@ export default function ResultsPage() {
 
     let categoryHtml = '';
     Object.entries(groups).forEach(([category, scores]) => {
-      const catScore = scores.reduce((s, p) => s + (p.score || 0), 0);
-      const catMax = scores.reduce((s, p) => s + (p.max_score || 0), 0);
+      const capped = paramScores.category_totals?.[category];
+      const catScore = capped ? capped.score : scores.reduce((s, p) => s + (p.score || 0), 0);
+      const catMax = capped ? capped.max : scores.reduce((s, p) => s + (p.max_score || 0), 0);
       categoryHtml += `
         <tr class="cat-row"><td colspan="4"><strong>${esc(category)}</strong> — ${catScore.toFixed(1)} / ${catMax}</td></tr>
         ${scores.map((ps) => `
@@ -539,8 +542,8 @@ export default function ResultsPage() {
 
   // Calculate max possible score
   const maxPossible = hasParamScores
-    ? paramScores.parameter_scores.reduce((sum, ps) => sum + ps.max_score, 0)
-    : 55;
+    ? (paramScores.max_possible ?? paramScores.parameter_scores.reduce((sum, ps) => sum + ps.max_score, 0))
+    : 50;
 
   return (
     <div className="page container">
@@ -639,7 +642,9 @@ export default function ResultsPage() {
                     }}>
                       <span>{category}</span>
                       <span style={{ fontWeight: 400 }}>
-                        {scores.reduce((s, p) => s + p.score, 0).toFixed(1)} / {scores.reduce((s, p) => s + p.max_score, 0)}
+                        {paramScores.category_totals?.[category]
+                          ? `${paramScores.category_totals[category].score.toFixed(1)} / ${paramScores.category_totals[category].max}`
+                          : `${scores.reduce((s, p) => s + p.score, 0).toFixed(1)} / ${scores.reduce((s, p) => s + p.max_score, 0)}`}
                       </span>
                     </div>
                     <table className="table" style={{ marginBottom: 0 }}>

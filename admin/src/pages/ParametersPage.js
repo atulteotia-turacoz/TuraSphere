@@ -10,7 +10,20 @@ import {
 
 const emptyForm = {
   category: '', code: '', name: '', description: '',
-  max_score: 0, is_active: true, sort_order: 0,
+  max_score: 0, score_group: '', group_max_score: '', is_active: true, sort_order: 0,
+};
+
+// Tiers of one criterion share a score group: their scores count together up
+// to the group total. Ungrouped parameters count up to their own max score.
+const capOf = (rows) => {
+  const seen = new Set();
+  return rows.reduce((sum, p) => {
+    if (!p.is_active) return sum;
+    if (!p.score_group) return sum + (p.max_score || 0);
+    if (seen.has(p.score_group)) return sum;
+    seen.add(p.score_group);
+    return sum + (p.group_max_score ?? 0);
+  }, 0);
 };
 
 const CATEGORIES = [
@@ -28,6 +41,9 @@ const CATEGORIES = [
   'C.7 Patient Impact',
   'C.8 Guideline Authority',
   'C.9 Emerging Leader',
+  'C.10 Practo Patient Influence',
+  'Medical registration number',
+  'Government organisation',
 ];
 
 export default function ParametersPage() {
@@ -74,6 +90,8 @@ export default function ParametersPage() {
       name: param.name,
       description: param.description || '',
       max_score: param.max_score,
+      score_group: param.score_group || '',
+      group_max_score: param.group_max_score ?? '',
       is_active: param.is_active,
       sort_order: param.sort_order,
     });
@@ -86,13 +104,22 @@ export default function ParametersPage() {
       setError('Category, Code, and Name are required');
       return;
     }
+    if (form.score_group && form.group_max_score === '') {
+      setError('Group Total is required when a Score Group is set');
+      return;
+    }
     setSaving(true); setError('');
+    const payload = {
+      ...form,
+      score_group: form.score_group.trim() || null,
+      group_max_score: form.score_group.trim() && form.group_max_score !== '' ? Number(form.group_max_score) : null,
+    };
     try {
       if (editId) {
-        await updateAssessmentParameter(editId, form);
+        await updateAssessmentParameter(editId, payload);
         setSuccess('Parameter updated successfully');
       } else {
-        await createAssessmentParameter(form);
+        await createAssessmentParameter(payload);
         setSuccess('Parameter created successfully');
       }
       setShowModal(false);
@@ -119,6 +146,17 @@ export default function ParametersPage() {
 
   const categories = [...new Set(parameters.map((p) => p.category))];
 
+  // "Total" cell: a run of rows in the same score group shares one merged cell.
+  const groupSpan = (i) => {
+    const g = filteredParams[i].score_group;
+    if (!g) return 1;
+    if (i > 0 && filteredParams[i - 1].score_group === g) return 0;
+    let n = 1;
+    while (i + n < filteredParams.length && filteredParams[i + n].score_group === g) n += 1;
+    return n;
+  };
+  const standardTotal = capOf(parameters.filter((p) => p.is_standard));
+
   if (loading) return <div className="admin-page"><div className="loading-spinner"><div className="spinner" /></div></div>;
 
   return (
@@ -126,7 +164,9 @@ export default function ParametersPage() {
       <div className="page-header-row">
         <div>
           <h1><Settings size={24} /> Assessment Parameters</h1>
-          <p className="page-subtitle">Manage KOL assessment criteria and scoring parameters</p>
+          <p className="page-subtitle">
+            Manage KOL assessment criteria and scoring parameters — standard assessment is out of <strong>{standardTotal}</strong>
+          </p>
         </div>
         <button className="btn btn-primary" onClick={openCreate}>
           <Plus size={16} /> Add Parameter
@@ -165,6 +205,7 @@ export default function ParametersPage() {
                 <th>Code</th>
                 <th>Name</th>
                 <th>Max Score</th>
+                <th>Total</th>
                 <th>Order</th>
                 <th>Type</th>
                 <th>Created By</th>
@@ -175,12 +216,12 @@ export default function ParametersPage() {
             <tbody>
               {filteredParams.length === 0 ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: 'center', padding: 40, color: 'var(--color-text-secondary)' }}>
+                  <td colSpan="10" style={{ textAlign: 'center', padding: 40, color: 'var(--color-text-secondary)' }}>
                     No parameters found
                   </td>
                 </tr>
               ) : (
-                filteredParams.map((p) => (
+                filteredParams.map((p, i) => (
                   <tr key={p.id}>
                     <td>
                       <span className="badge badge-info" style={{ fontSize: '0.75rem' }}>{p.category}</span>
@@ -195,6 +236,15 @@ export default function ParametersPage() {
                       )}
                     </td>
                     <td><strong>{p.max_score}</strong></td>
+                    {groupSpan(i) > 0 && (
+                      <td rowSpan={groupSpan(i)} style={{ verticalAlign: 'middle', textAlign: 'center' }}
+                        title={p.score_group ? `Group ${p.score_group}: these tiers count together up to ${p.group_max_score}` : undefined}>
+                        <strong>{p.score_group ? p.group_max_score : p.max_score}</strong>
+                        {p.score_group && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)' }}>{p.score_group}</div>
+                        )}
+                      </td>
+                    )}
                     <td>{p.sort_order}</td>
                     <td>
                       {p.is_standard ? (
@@ -239,6 +289,13 @@ export default function ParametersPage() {
                     </td>
                   </tr>
                 ))
+              )}
+              {filteredParams.length > 0 && (
+                <tr>
+                  <td colSpan="4" style={{ textAlign: 'right' }}><strong>TOTAL</strong></td>
+                  <td style={{ textAlign: 'center' }}><strong>{capOf(filteredParams)}</strong></td>
+                  <td colSpan="5" />
+                </tr>
               )}
             </tbody>
           </table>
@@ -297,6 +354,23 @@ export default function ParametersPage() {
                   <input className="form-control" type="number" step="0.5" min="0" value={form.max_score}
                     onChange={(e) => setForm({ ...form, max_score: parseFloat(e.target.value) || 0 })} />
                 </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Score Group <small style={{ color: 'var(--color-text-secondary)' }}>(optional)</small></label>
+                  <input className="form-control" placeholder="e.g. C2_SPEAKING" value={form.score_group}
+                    onChange={(e) => setForm({ ...form, score_group: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') })} />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Group Total</label>
+                  <input className="form-control" type="number" step="0.5" min="0" value={form.group_max_score}
+                    disabled={!form.score_group}
+                    onChange={(e) => setForm({ ...form, group_max_score: e.target.value })} />
+                </div>
+              </div>
+              <small style={{ display: 'block', marginTop: -8, marginBottom: 12, color: 'var(--color-text-secondary)' }}>
+                Parameters with the same Score Group count together, up to the Group Total.
+              </small>
+
+              <div style={{ display: 'flex', gap: 16 }}>
                 <div className="form-group" style={{ flex: 1 }}>
                   <label>Sort Order</label>
                   <input className="form-control" type="number" min="0" value={form.sort_order}

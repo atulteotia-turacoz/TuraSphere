@@ -365,6 +365,19 @@ def on_startup():
             except Exception as e:
                 print(f"[{_table}.experience_years migration] skipped: {e}")
 
+        # ── Assessment parameters: group caps (tiers of one criterion) ──
+        try:
+            insp = inspect(engine)
+            if "assessment_parameters" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("assessment_parameters")}
+                with engine.begin() as conn:
+                    if "score_group" not in cols:
+                        conn.execute(text("ALTER TABLE assessment_parameters ADD COLUMN score_group VARCHAR(50) NULL"))
+                    if "group_max_score" not in cols:
+                        conn.execute(text("ALTER TABLE assessment_parameters ADD COLUMN group_max_score FLOAT NULL"))
+        except Exception as e:
+            print(f"[assessment_parameters.score_group migration] skipped: {e}")
+
         # ── Integrations: per-account keys (owner_user_id NULL = platform) ──
         # `web_search_usage` itself is created by create_all above.
         for _table in ("web_search_configurations", "google_scholar_configurations"):
@@ -1069,82 +1082,85 @@ def on_startup():
         if existing_params == 0:
             default_params = [
                 # Selection Criteria - Qualification
-                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_GRADUATION", name="Graduation", description="Relevant graduation degree", max_score=2, sort_order=1),
-                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_POST_GRADUATION", name="Post Graduation", description="Post graduation degree", max_score=3, sort_order=2),
-                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_FELLOWSHIP", name="Fellowship", description="Fellowship qualification", max_score=1, sort_order=3),
-                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_OTHER_QUALIFICATION", name="Any Other Qualification", description="Any other relevant qualification", max_score=0, sort_order=4),
+                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_GRADUATION", name="Graduation", description="Relevant graduation degree", max_score=1, sort_order=1),
+                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_POST_GRADUATION", name="Post Graduation", description="Post graduation degree", max_score=2, sort_order=2),
+                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_FELLOWSHIP", name="Fellowship", description="Fellowship qualification", max_score=2, sort_order=3),
+                AssessmentParameter(category="Selection Criteria - Qualification", code="SC_OTHER_QUALIFICATION", name="Any Other Qualification", description="Any other relevant qualification", max_score=1, sort_order=4),
                 AssessmentParameter(category="Selection Criteria - Qualification", code="SC_NON_DOCTOR_DEGREE", name="For non-doctors - Any Relevant Degree / Diploma", description="Relevant degree or diploma for non-doctor HCPs", max_score=1, sort_order=5),
 
                 # Selection Criteria - Experience
-                AssessmentParameter(category="Selection Criteria - Experience", code="SC_YEARS_EXPERIENCE", name="No. of Years of Experience", description="Less than 5 (1), 5-10 (2), 10-15 (3), 15+ (4)", max_score=4, sort_order=6),
+                AssessmentParameter(category="Selection Criteria - Experience", code="SC_YEARS_EXPERIENCE", name="No. of Years of Experience", description="Less than 5 (1), 5-10 (2), 10-15 (3), 15+ (4)", max_score=2, sort_order=6),
 
                 # Selection Criteria - Surgeons
-                AssessmentParameter(category="Selection Criteria - Surgeons", code="SC_SURGERIES_PER_YEAR", name="No. of surgeries / procedures per year", description="Less than 100 (1), 100-200 (2), 200-500 (3), 500+ (4)", max_score=4, sort_order=7),
-                AssessmentParameter(category="Selection Criteria - Surgeons", code="SC_SURGICAL_DESCRIPTION", name="Brief Description of surgical procedure undertaken", description="Description of surgical procedures", max_score=0, sort_order=8),
-                AssessmentParameter(category="Selection Criteria - Surgeons", code="SC_UNIQUE_EXPERTISE", name="Any Unique Surgical / Clinical Expertise", description="Unique surgical or clinical expertise", max_score=0, sort_order=9),
+                AssessmentParameter(category="Selection Criteria - Surgeons", code="SC_SURGERIES_PER_YEAR", name="No. of surgeries / procedures per year", description="Less than 100 (1), 100-200 (2), 200-500 (3), 500+ (4)", max_score=2, sort_order=7),
+                AssessmentParameter(category="Selection Criteria - Surgeons", code="SC_SURGICAL_DESCRIPTION", name="Brief Description of surgical procedure undertaken", description="Description of surgical procedures", max_score=1, sort_order=8),
+                AssessmentParameter(category="Selection Criteria - Surgeons", code="SC_UNIQUE_EXPERTISE", name="Any Unique Surgical / Clinical Expertise", description="Unique surgical or clinical expertise", max_score=1, sort_order=9),
 
                 # Selection Criteria - Publications
                 AssessmentParameter(category="Selection Criteria - Publications", code="SC_PUB_NATIONAL", name="Publication / Presentation - National Level", description="National level publications or presentations", max_score=1, sort_order=10),
                 AssessmentParameter(category="Selection Criteria - Publications", code="SC_PUB_INTERNATIONAL", name="Publication / Presentation - International Level", description="International level publications or presentations", max_score=2, sort_order=11),
 
                 # Selection Criteria - Faculty
-                AssessmentParameter(category="Selection Criteria - Faculty", code="SC_FACULTY_POSITIONS", name="Faculty Positions", description="Holds faculty positions at academic institutions", max_score=2, sort_order=12),
+                AssessmentParameter(category="Selection Criteria - Faculty", code="SC_FACULTY_POSITIONS", name="Faculty Positions", description="Holds faculty positions at academic institutions", max_score=1, sort_order=12),
 
                 # C.1 Leadership
                 AssessmentParameter(category="C.1 Leadership", code="C1_BOARD_MEMBER", name="Board member on one or more medical association(s)", description="Physician is a board member on one or more medical association(s)", max_score=1, sort_order=13),
                 AssessmentParameter(category="C.1 Leadership", code="C1_ADVISORY_BOARDS", name="Participates regularly in advisory boards (industry sponsored)", description="Physician participates regularly in advisory boards (industry sponsored)", max_score=1, sort_order=14),
-                AssessmentParameter(category="C.1 Leadership", code="C1_TOP_INSTITUTION", name="Current affiliation with top institution as Chief or full Professor", description="Current affiliation with top institution in area of specialty as Chief or full Professor at top teaching hospital or Medical College", max_score=3, sort_order=15),
-                AssessmentParameter(category="C.1 Leadership", code="C1_SOCIETY_LEADER", name="Past/current leader of a National / International Society/Associations", description="Past/current leader of a National / International Society/Associations", max_score=5, sort_order=16),
-                AssessmentParameter(category="C.1 Leadership", code="C1_EXECUTIVE_BOARD", name="Member of executive board or governing body in international committee/society", description="Member in the last 5 years of an executive board or governing body in an international committee/society or professional medical association", max_score=5, sort_order=17),
+                AssessmentParameter(category="C.1 Leadership", code="C1_TOP_INSTITUTION", name="Current affiliation with top institution as Chief or full Professor", description="Current affiliation with top institution in area of specialty as Chief or full Professor at top teaching hospital or Medical College", max_score=2, sort_order=15),
+                AssessmentParameter(category="C.1 Leadership", code="C1_SOCIETY_LEADER", name="Past/current leader of a National / International Society/Associations", description="Past/current leader of a National / International Society/Associations", max_score=1, sort_order=16),
+                AssessmentParameter(category="C.1 Leadership", code="C1_EXECUTIVE_BOARD", name="Member of executive board or governing body in international committee/society", description="Member in the last 5 years of an executive board or governing body in an international committee/society or professional medical association", max_score=1, sort_order=17),
 
                 # C.2 Presentations
-                AssessmentParameter(category="C.2 Presentations", code="C2_1_TO_5_ENGAGEMENTS", name="1 to 5 domestic and/or global speaking engagements (past 5 years)", description="In the past five years, between 1 to 5 domestic and/or global speaking engagements", max_score=1, sort_order=18),
-                AssessmentParameter(category="C.2 Presentations", code="C2_5_TO_10_ENGAGEMENTS", name="5 to 10 domestic and/or global speaking engagements (past 5 years)", description="In the past five years, between 5 to 10 domestic and/or global speaking engagements", max_score=2, sort_order=19),
-                AssessmentParameter(category="C.2 Presentations", code="C2_10_PLUS_ENGAGEMENTS", name="More than 10 domestic and/or global speaking engagements (past 5 years)", description="In the past five years, has completed more than 10 domestic and/or global speaking engagements", max_score=5, sort_order=20),
-                AssessmentParameter(category="C.2 Presentations", code="C2_INTL_SPEAKER", name="5+ speaker engagements at international committee/society (past 5 years)", description="In the past 5 years, has completed 5 or more Speaker/presenter engagements at an international committee/society or international professional medical association", max_score=5, sort_order=21),
+                AssessmentParameter(category="C.2 Presentations", code="C2_1_TO_5_ENGAGEMENTS", name="1 to 5 domestic and/or global speaking engagements (past 5 years)", description="In the past five years, between 1 to 5 domestic and/or global speaking engagements", max_score=2, score_group="C2_SPEAKING", group_max_score=4, sort_order=18),
+                AssessmentParameter(category="C.2 Presentations", code="C2_5_TO_10_ENGAGEMENTS", name="5 to 10 domestic and/or global speaking engagements (past 5 years)", description="In the past five years, between 5 to 10 domestic and/or global speaking engagements", max_score=3, score_group="C2_SPEAKING", group_max_score=4, sort_order=19),
+                AssessmentParameter(category="C.2 Presentations", code="C2_10_PLUS_ENGAGEMENTS", name="More than 10 domestic and/or global speaking engagements (past 5 years)", description="In the past five years, has completed more than 10 domestic and/or global speaking engagements", max_score=4, score_group="C2_SPEAKING", group_max_score=4, sort_order=20),
+                AssessmentParameter(category="C.2 Presentations", code="C2_INTL_SPEAKER", name="5+ speaker engagements at international committee/society (past 5 years)", description="In the past 5 years, has completed 5 or more Speaker/presenter engagements at an international committee/society or international professional medical association", max_score=4, score_group="C2_SPEAKING", group_max_score=4, sort_order=21),
 
                 # C.3 Publications
-                AssessmentParameter(category="C.3 Publications", code="C3_1_TO_5_ARTICLES", name="1-5 peer reviewed articles (past 5 years)", description="In past five years, published 1-5 peer reviewed articles", max_score=1, sort_order=22),
-                AssessmentParameter(category="C.3 Publications", code="C3_5_TO_10_ARTICLES", name="5-10 peer reviewed articles or journal editorial board (past 5 years)", description="In past five years, published 5 to 10 peer reviewed articles or participated on 1 journal editorial board or performed systematic reviews", max_score=2, sort_order=23),
-                AssessmentParameter(category="C.3 Publications", code="C3_INTL_PUBLICATION", name="Article in international peer-reviewed journals (past 5 years)", description="In past five years, published at least one article in international peer-reviewed journals or participated in international clinical research/trial or contributed in international product development", max_score=5, sort_order=24),
-                AssessmentParameter(category="C.3 Publications", code="C3_TEXTBOOK_AUTHOR", name="Contributed to a textbook as editor or author", description="Contributed to a textbook as an editor or an author", max_score=3, sort_order=25),
+                AssessmentParameter(category="C.3 Publications", code="C3_1_TO_5_ARTICLES", name="1-5 peer reviewed articles (past 5 years)", description="In past five years, published 1-5 peer reviewed articles", max_score=2, score_group="C3_ARTICLES", group_max_score=3, sort_order=22),
+                AssessmentParameter(category="C.3 Publications", code="C3_5_TO_10_ARTICLES", name="5-10 peer reviewed articles or journal editorial board (past 5 years)", description="In past five years, published 5 to 10 peer reviewed articles or participated on 1 journal editorial board or performed systematic reviews", max_score=3, score_group="C3_ARTICLES", group_max_score=3, sort_order=23),
+                AssessmentParameter(category="C.3 Publications", code="C3_INTL_PUBLICATION", name="Article in international peer-reviewed journals (past 5 years)", description="In past five years, published at least one article in international peer-reviewed journals or participated in international clinical research/trial or contributed in international product development", max_score=1, score_group="C3_ARTICLES", group_max_score=3, sort_order=24),
+                AssessmentParameter(category="C.3 Publications", code="C3_TEXTBOOK_AUTHOR", name="Contributed to a textbook as editor or author", description="Contributed to a textbook as an editor or an author", max_score=1, sort_order=25),
 
                 # C.4 Clinical Experience
-                AssessmentParameter(category="C.4 Clinical Experience", code="C4_YEARS_CLINICAL", name="No. of Years of Clinical Experience", description="Years of clinical experience score from Selection Criteria", max_score=4, sort_order=26),
-                AssessmentParameter(category="C.4 Clinical Experience", code="C4_PROCEDURES_PER_YEAR", name="No. of surgeries / procedures per year", description="Procedures per year score from Selection Criteria", max_score=4, sort_order=27),
-                AssessmentParameter(category="C.4 Clinical Experience", code="C4_UNIQUE_EXPERTISE", name="Unique clinical expertise", description="Has unique clinical expertise", max_score=3, sort_order=28),
+                AssessmentParameter(category="C.4 Clinical Experience", code="C4_YEARS_CLINICAL", name="No. of Years of Clinical Experience", description="Years of clinical experience score from Selection Criteria", max_score=3, sort_order=26),
+                AssessmentParameter(category="C.4 Clinical Experience", code="C4_PROCEDURES_PER_YEAR", name="No. of surgeries / procedures per year", description="Procedures per year score from Selection Criteria", max_score=0, sort_order=27),
+                AssessmentParameter(category="C.4 Clinical Experience", code="C4_UNIQUE_EXPERTISE", name="Unique clinical expertise", description="Has unique clinical expertise", max_score=2, sort_order=28),
 
                 # ── Phase 2/3 Advanced Metrics (C.5–C.9 BONUS, 0-15pts) ──
 
                 # C.5 Citation Velocity (0-3pts)
-                AssessmentParameter(category="C.5 Citation Velocity", code="C5_10_PLUS_PUBS_YR", name=">10 publications/year (2024-26)", description="More than 10 publications per year in recent period. Source: PubMed date filter", max_score=3, sort_order=29),
-                AssessmentParameter(category="C.5 Citation Velocity", code="C5_5_TO_10_PUBS_YR", name="5-10 publications/year", description="Between 5 and 10 publications per year. Source: PubMed date filter", max_score=2, sort_order=30),
-                AssessmentParameter(category="C.5 Citation Velocity", code="C5_2_TO_5_PUBS_YR", name="2-5 publications/year", description="Between 2 and 5 publications per year. Source: PubMed date filter", max_score=1, sort_order=31),
+                AssessmentParameter(category="C.5 Citation Velocity", code="C5_10_PLUS_PUBS_YR", name=">10 publications/year (2024-26)", description="More than 10 publications per year in recent period. Source: PubMed date filter", max_score=3, score_group="C5_PUBS_PER_YEAR", group_max_score=3, sort_order=29),
+                AssessmentParameter(category="C.5 Citation Velocity", code="C5_5_TO_10_PUBS_YR", name="5-10 publications/year", description="Between 5 and 10 publications per year. Source: PubMed date filter", max_score=2, score_group="C5_PUBS_PER_YEAR", group_max_score=3, sort_order=30),
+                AssessmentParameter(category="C.5 Citation Velocity", code="C5_2_TO_5_PUBS_YR", name="2-5 publications/year", description="Between 2 and 5 publications per year. Source: PubMed date filter", max_score=1, score_group="C5_PUBS_PER_YEAR", group_max_score=3, sort_order=31),
 
                 # C.6 Network Centrality (0-4pts)
-                AssessmentParameter(category="C.6 Network Centrality", code="C6_PAGERANK_TOP_10", name="PageRank Top 10%", description="In the top 10% of PageRank scores among co-author network. Source: PubMed co-authors + NetworkX", max_score=4, sort_order=32),
-                AssessmentParameter(category="C.6 Network Centrality", code="C6_PAGERANK_TOP_25", name="PageRank Top 25%", description="In the top 25% of PageRank scores among co-author network. Source: PubMed co-authors + NetworkX", max_score=3, sort_order=33),
-                AssessmentParameter(category="C.6 Network Centrality", code="C6_COAUTHORS_20_PLUS", name="Co-authors >20", description="Has more than 20 unique co-authors. Source: PubMed co-author count", max_score=2, sort_order=34),
+                AssessmentParameter(category="C.6 Network Centrality", code="C6_PAGERANK_TOP_10", name="PageRank Top 10%", description="In the top 10% of PageRank scores among co-author network. Source: PubMed co-authors + NetworkX", max_score=1, score_group="C6_NETWORK", group_max_score=2, sort_order=32),
+                AssessmentParameter(category="C.6 Network Centrality", code="C6_PAGERANK_TOP_25", name="PageRank Top 25%", description="In the top 25% of PageRank scores among co-author network. Source: PubMed co-authors + NetworkX", max_score=2, score_group="C6_NETWORK", group_max_score=2, sort_order=33),
+                AssessmentParameter(category="C.6 Network Centrality", code="C6_COAUTHORS_20_PLUS", name="Co-authors >20", description="Has more than 20 unique co-authors. Source: PubMed co-author count", max_score=2, score_group="C6_NETWORK", group_max_score=2, sort_order=34),
 
                 # C.7 Patient Impact (0-3pts)
-                AssessmentParameter(category="C.7 Patient Impact", code="C7_5_PLUS_TRIALS", name="5 or more trials led", description="Led 5 or more clinical trials. Source: ClinicalTrials.gov API", max_score=3, sort_order=35),
-                AssessmentParameter(category="C.7 Patient Impact", code="C7_3_TO_4_TRIALS", name="3-4 trials led", description="Led 3 to 4 clinical trials. Source: ClinicalTrials.gov API", max_score=2, sort_order=36),
-                AssessmentParameter(category="C.7 Patient Impact", code="C7_1_TO_2_TRIALS", name="1-2 trials led", description="Led 1 to 2 clinical trials. Source: ClinicalTrials.gov API", max_score=1, sort_order=37),
+                AssessmentParameter(category="C.7 Patient Impact", code="C7_5_PLUS_TRIALS", name="5 or more trials led", description="Led 5 or more clinical trials. Source: ClinicalTrials.gov API", max_score=2, score_group="C7_TRIALS", group_max_score=2, sort_order=35),
+                AssessmentParameter(category="C.7 Patient Impact", code="C7_3_TO_4_TRIALS", name="3-4 trials led", description="Led 3 to 4 clinical trials. Source: ClinicalTrials.gov API", max_score=2, score_group="C7_TRIALS", group_max_score=2, sort_order=36),
+                AssessmentParameter(category="C.7 Patient Impact", code="C7_1_TO_2_TRIALS", name="1-2 trials led", description="Led 1 to 2 clinical trials. Source: ClinicalTrials.gov API", max_score=1, score_group="C7_TRIALS", group_max_score=2, sort_order=37),
 
                 # C.8 Guideline Authority (0-3pts)
-                AssessmentParameter(category="C.8 Guideline Authority", code="C8_INTL_GUIDELINE", name="International guideline author", description="Author of international clinical guidelines. Source: Google Scholar 'guideline' search", max_score=3, sort_order=38),
-                AssessmentParameter(category="C.8 Guideline Authority", code="C8_NATL_GUIDELINE", name="National guideline author", description="Author of national clinical guidelines or consensus statements. Source: Google Scholar 'consensus' search", max_score=2, sort_order=39),
+                AssessmentParameter(category="C.8 Guideline Authority", code="C8_INTL_GUIDELINE", name="International guideline author", description="Author of international clinical guidelines. Source: Google Scholar 'guideline' search", max_score=2, score_group="C8_GUIDELINES", group_max_score=2, sort_order=38),
+                AssessmentParameter(category="C.8 Guideline Authority", code="C8_NATL_GUIDELINE", name="National guideline author", description="Author of national clinical guidelines or consensus statements. Source: Google Scholar 'consensus' search", max_score=1, score_group="C8_GUIDELINES", group_max_score=2, sort_order=39),
 
                 # C.9 Emerging Leader (0-2pts)
-                AssessmentParameter(category="C.9 Emerging Leader", code="C9_PUB_GROWTH_20PCT", name="Publication growth >20%/year", description="Year-over-year publication growth exceeding 20%. Source: PubMed year-over-year analysis", max_score=2, sort_order=40),
-                AssessmentParameter(category="C.9 Emerging Leader", code="C9_YOUNG_PROLIFIC", name="Age <45 with significant publications", description="HCP under 45 years old with significant publication record. Source: CV age estimate + publication count", max_score=1, sort_order=41),
+                AssessmentParameter(category="C.9 Emerging Leader", code="C9_PUB_GROWTH_20PCT", name="Publication growth >20%/year", description="Year-over-year publication growth exceeding 20%. Source: PubMed year-over-year analysis", max_score=1, sort_order=40),
+                AssessmentParameter(category="C.9 Emerging Leader", code="C9_YOUNG_PROLIFIC", name="Age <45 with significant publications", description="HCP under 45 years old with significant publication record. Source: CV age estimate + publication count", max_score=2, sort_order=41),
 
                 # C.10 Practo Patient Influence (0-4pts bonus)
-                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_REVIEWS_HIGH", name="100+ patient reviews on Practo", description="High patient engagement with 100 or more reviews on Practo. Source: Practo profile", max_score=2, scoring_source="practo", sort_order=42),
-                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_REVIEWS_MODERATE", name="25+ patient reviews on Practo", description="Moderate patient engagement with 25 or more reviews. Source: Practo profile", max_score=1, scoring_source="practo", sort_order=43),
-                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_RATING_HIGH", name="High patient rating on Practo", description="Patient rating of 4.5+ (or 90%+) on Practo. Source: Practo profile", max_score=2, scoring_source="practo", sort_order=44),
-                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_RECOMMENDATIONS", name="50+ recommendations on Practo", description="50 or more patient/peer recommendations on Practo. Source: Practo profile", max_score=1, scoring_source="practo", sort_order=45),
-                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_EXPERIENCE", name="15+ years experience (Practo verified)", description="15 or more years of experience as listed on Practo profile. Source: Practo profile", max_score=2, scoring_source="practo", sort_order=46),
+                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_REVIEWS_HIGH", name="100+ patient reviews on Practo", description="High patient engagement with 100 or more reviews on Practo. Source: Practo profile", max_score=1, score_group="C10_PRACTO", group_max_score=1, scoring_source="practo", sort_order=42),
+                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_REVIEWS_MODERATE", name="25+ patient reviews on Practo", description="Moderate patient engagement with 25 or more reviews. Source: Practo profile", max_score=1, score_group="C10_PRACTO", group_max_score=1, scoring_source="practo", sort_order=43),
+                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_RATING_HIGH", name="High patient rating on Practo", description="Patient rating of 4.5+ (or 90%+) on Practo. Source: Practo profile", max_score=1, score_group="C10_PRACTO", group_max_score=1, scoring_source="practo", sort_order=44),
+                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_RECOMMENDATIONS", name="50+ recommendations on Practo", description="50 or more patient/peer recommendations on Practo. Source: Practo profile", max_score=1, score_group="C10_PRACTO", group_max_score=1, scoring_source="practo", sort_order=45),
+                AssessmentParameter(category="C.10 Practo Patient Influence", code="PRACTO_EXPERIENCE", name="15+ years experience (Practo verified)", description="15 or more years of experience as listed on Practo profile. Source: Practo profile", max_score=1, score_group="C10_PRACTO", group_max_score=1, scoring_source="practo", sort_order=46),
+                # Registration / affiliation
+                AssessmentParameter(category="Medical registration number", code="MEDICAL_REGISTRATION_NO", name="Medical registration number", description="Has a valid medical registration number", max_score=0, sort_order=47),
+                AssessmentParameter(category="Government organisation", code="GOVERNMENT_ORGANISATION", name="Government organisation", description="Is affiliated to a government institution.", max_score=1, sort_order=48),
             ]
             db.add_all(default_params)
             db.commit()

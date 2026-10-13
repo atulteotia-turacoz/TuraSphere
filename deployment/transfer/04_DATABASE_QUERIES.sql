@@ -91,3 +91,16 @@ WHERE NOT EXISTS (SELECT 1 FROM kol_pending p WHERE p.user_id = @owner_id AND (
 --         OR p.practo_profile_url = i.practo_profile_url COLLATE utf8mb4_general_ci)
 --    WHERE p.user_id = @owner_id AND p.status = 'pending' AND p.reviewed_at IS NULL;
 
+-- =====================================================================
+-- 2026-10-13 · Assessment parameters → Excel scoring, score groups, full scale 50
+-- =====================================================================
+-- One file, safe to run twice. It adds the columns score_group / group_max_score
+-- if they are missing, then updates the 48 standard parameters by `code` and
+-- inserts any that are missing (MEDICAL_REGISTRATION_NO, GOVERNMENT_ORGANISATION).
+-- Row ids, user preferences, custom parameters and past scores are untouched.
+-- It ends with a SELECT check that should show 48 | 50.
+--   mysql --default-character-set=utf8mb4 -u turaquant_user -p turaquant_db < assessment_parameters.sql
+--
+-- Columns it adds (for reference; the backend also adds them on start):
+-- ALTER TABLE assessment_parameters ADD COLUMN score_group VARCHAR(50) NULL;
+-- ALTER TABLE assessment_parameters ADD COLUMN group_max_score FLOAT NULL;

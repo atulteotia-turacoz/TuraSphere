@@ -22,6 +22,8 @@ class ParameterCreate(BaseModel):
     name: str
     description: Optional[str] = None
     max_score: float = 0
+    score_group: Optional[str] = None
+    group_max_score: Optional[float] = None
     is_active: bool = True
     is_standard: bool = True
     sort_order: int = 0
@@ -32,6 +34,8 @@ class ParameterUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     max_score: Optional[float] = None
+    score_group: Optional[str] = None
+    group_max_score: Optional[float] = None
     is_active: Optional[bool] = None
     is_standard: Optional[bool] = None
     sort_order: Optional[int] = None
@@ -43,6 +47,8 @@ class ParameterOut(BaseModel):
     name: str
     description: Optional[str]
     max_score: float
+    score_group: Optional[str] = None
+    group_max_score: Optional[float] = None
     is_active: bool
     is_standard: bool
     created_by: Optional[int]
@@ -59,6 +65,8 @@ class UserParameterOut(BaseModel):
     name: str
     description: Optional[str]
     max_score: float
+    score_group: Optional[str] = None
+    group_max_score: Optional[float] = None
     is_active: bool
     is_standard: bool
     is_additional: bool = False  # True for C.5-C.9 bonus params
@@ -79,6 +87,8 @@ class UserParameterCreate(BaseModel):
     name: str
     description: Optional[str] = None
     max_score: float = 0
+    score_group: Optional[str] = None
+    group_max_score: Optional[float] = None
     sort_order: int = 0
 
 class UserParameterUpdate(BaseModel):
@@ -87,6 +97,8 @@ class UserParameterUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     max_score: Optional[float] = None
+    score_group: Optional[str] = None
+    group_max_score: Optional[float] = None
     sort_order: Optional[int] = None
 
 
@@ -203,6 +215,8 @@ def user_list_parameters(
             name=p.name,
             description=p.description,
             max_score=p.max_score,
+            score_group=p.score_group,
+            group_max_score=p.group_max_score,
             is_active=p.is_active,
             is_standard=p.is_standard,
             is_additional=p.category in ADDITIONAL_CATEGORIES,
@@ -254,6 +268,8 @@ def user_create_custom_parameter(
         name=data.name,
         description=data.description,
         max_score=data.max_score,
+        score_group=data.score_group,
+        group_max_score=data.group_max_score,
         sort_order=data.sort_order,
         is_active=True,
         is_standard=False,
@@ -265,6 +281,7 @@ def user_create_custom_parameter(
     return UserParameterOut(
         id=param.id, category=param.category, code=param.code, name=param.name,
         description=param.description, max_score=param.max_score, is_active=param.is_active,
+        score_group=param.score_group, group_max_score=param.group_max_score,
         is_standard=param.is_standard, is_additional=False, created_by=param.created_by,
         sort_order=param.sort_order, is_enabled=True,
     )
@@ -300,6 +317,7 @@ def user_update_custom_parameter(
     return UserParameterOut(
         id=param.id, category=param.category, code=param.code, name=param.name,
         description=param.description, max_score=param.max_score, is_active=param.is_active,
+        score_group=param.score_group, group_max_score=param.group_max_score,
         is_standard=param.is_standard, is_additional=False, created_by=param.created_by,
         sort_order=param.sort_order, is_enabled=pref.is_enabled if pref else True,
     )
