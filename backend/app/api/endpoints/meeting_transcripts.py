@@ -20,16 +20,17 @@ Authorization — ORGANIZER ONLY (tightened 2026-08-05):
 """
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from jose import JWTError, jwt
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, create_access_token
 from app.models.user import User
 from app.models.meeting import BoardMeeting
 from app.models.meeting_recording import (
@@ -253,30 +254,20 @@ def delete_meeting_recording(
             "file_removed": file_removed, "detail": detail}
 
 
-@router.get("/meetings/{meeting_id}/recording/{recording_id}/stream")
-def stream_meeting_recording(
-    meeting_id: int,
-    recording_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Serve the recording file so the organizer can play or download it.
+# A <video src> can't send the Authorization header, so playback uses a
+# short-lived link signed for ONE recording and ONE user. Long enough to watch
+# and seek through a long meeting; the user is re-checked on every request.
+# `typ` marks it as a scoped token, which get_current_user refuses — so a link
+# copied out of a log can't be replayed as a login.
+PLAY_LINK_TYP = "recording_play"
+PLAY_LINK_TTL = timedelta(hours=6)
 
-    `file_path_or_url` is a server-side path (LiveKit egress writes into
-    uploads/, manual uploads land there too), which a browser cannot open — the
-    Post-meeting list showed a row with no way to watch it. Starlette's
-    FileResponse honours HTTP Range, so seeking works in a <video> element
-    instead of forcing a full download first.
 
-    Organizer-only, same rule as the rest of this module.
-    """
-    meeting = _get_meeting_or_404(meeting_id, db)
-    if not _is_organizer_or_admin(current_user, meeting):
-        raise HTTPException(status_code=403, detail="Access denied")
-
+def _recording_path_or_404(db: Session, meeting: BoardMeeting, recording_id: int) -> str:
+    """Host path of a recording's file, or an HTTPException that says why not."""
     rec = db.query(MeetingRecording).filter(
         MeetingRecording.id == recording_id,
-        MeetingRecording.meeting_id == meeting_id,
+        MeetingRecording.meeting_id == meeting.id,
     ).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Recording not found")
@@ -298,15 +289,95 @@ def stream_meeting_recording(
         egress = livekit_service.egress_status_for_file(
             db, meeting, os.path.basename(stored), account_config.owner_of_meeting(meeting))
         raise HTTPException(status_code=404, detail=livekit_service.missing_recording_detail(stored, egress))
+    return path
 
+
+def _recording_file_response(path: str, download: bool = False) -> FileResponse:
     ext = os.path.splitext(path)[1].lower()
     media_type = {
         ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
         ".mkv": "video/x-matroska", ".m4a": "audio/mp4", ".mp3": "audio/mpeg",
         ".wav": "audio/wav",
     }.get(ext, "application/octet-stream")
+    return FileResponse(path, media_type=media_type, filename=os.path.basename(path),
+                        content_disposition_type="attachment" if download else "inline")
 
-    return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
+
+@router.get("/meetings/{meeting_id}/recording/{recording_id}/stream")
+def stream_meeting_recording(
+    meeting_id: int,
+    recording_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Serve the recording file so the organizer can play or download it.
+
+    `file_path_or_url` is a server-side path (LiveKit egress writes into
+    uploads/, manual uploads land there too), which a browser cannot open — the
+    Post-meeting list showed a row with no way to watch it. Starlette's
+    FileResponse honours HTTP Range, so seeking works in a <video> element
+    instead of forcing a full download first.
+
+    Organizer-only, same rule as the rest of this module.
+    """
+    meeting = _get_meeting_or_404(meeting_id, db)
+    if not _is_organizer_or_admin(current_user, meeting):
+        raise HTTPException(status_code=403, detail="Access denied")
+    return _recording_file_response(_recording_path_or_404(db, meeting, recording_id))
+
+
+@router.post("/meetings/{meeting_id}/recording/{recording_id}/play-link")
+def create_recording_play_link(
+    meeting_id: int,
+    recording_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """A signed token for `/play`, so the browser streams the file with Range
+    requests instead of downloading it whole first. The blob download used
+    before timed out on long recordings ("Could not load the recording.").
+
+    Checks the file exists now, so a missing/failed recording still gets the
+    explanatory message rather than a broken player.
+    """
+    meeting = _get_meeting_or_404(meeting_id, db)
+    if not _is_organizer_or_admin(current_user, meeting):
+        raise HTTPException(status_code=403, detail="Access denied")
+    _recording_path_or_404(db, meeting, recording_id)
+    token = create_access_token(
+        {"sub": str(current_user.id), "typ": PLAY_LINK_TYP,
+         "meeting_id": meeting_id, "recording_id": recording_id},
+        expires_delta=PLAY_LINK_TTL,
+    )
+    return {"token": token, "expires_in": int(PLAY_LINK_TTL.total_seconds())}
+
+
+@router.get("/meetings/{meeting_id}/recording/{recording_id}/play")
+def play_meeting_recording(
+    meeting_id: int,
+    recording_id: int,
+    t: str,
+    download: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Stream a recording for a <video src> (or a download link) using a token
+    from `/play-link`. The token only opens the recording it was issued for,
+    and the user must still be active and still the organizer."""
+    try:
+        claims = jwt.decode(t, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="This playback link has expired. Press Play again.")
+    if (claims.get("typ") != PLAY_LINK_TYP
+            or claims.get("meeting_id") != meeting_id
+            or claims.get("recording_id") != recording_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    user = db.query(User).filter(User.id == int(claims.get("sub") or 0)).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=403, detail="Access denied")
+    meeting = _get_meeting_or_404(meeting_id, db)
+    if not _is_organizer_or_admin(user, meeting):
+        raise HTTPException(status_code=403, detail="Access denied")
+    return _recording_file_response(_recording_path_or_404(db, meeting, recording_id), download)
 
 
 @router.post("/meetings/{meeting_id}/recording", status_code=201)

@@ -38,6 +38,10 @@ def decode_token(token: str) -> dict:
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     from app.models.user import User
     payload = decode_token(token)
+    # Scoped tokens (client-portal sessions, recording play links) carry `typ`
+    # and are only valid on their own routes, never as a login.
+    if payload.get("typ"):
+        raise HTTPException(status_code=401, detail="Invalid token")
     user_id = payload.get("sub")
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid token")

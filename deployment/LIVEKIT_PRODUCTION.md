@@ -217,6 +217,13 @@ services:
     # LiveKit's stock template, which omits camera-off participants entirely.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # EGRESS_OUT_DIR in the root .env = /var/www/turaquant/uploads/meetings/livekit.
+      # It must be outside backend/: deploys replace that tree, the bind mount
+      # stays attached to the deleted folder, and every recording fails with
+      # "open /out/…mp4: no such file or directory" until egress is restarted.
+      # Set EGRESS_HOST_DIR in backend/.env to the same folder.
+      - ${EGRESS_OUT_DIR:-./backend/uploads/meetings/livekit}:/out
 
   redis:
     # Localhost only. Nothing outside the box should reach an unauthenticated

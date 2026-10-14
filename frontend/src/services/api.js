@@ -539,8 +539,14 @@ export const getMeetingRecording = (meetingId) => api.get(`/meetings/${meetingId
 // would hit it unauthenticated and 401.
 export const deleteMeetingRecording = (meetingId, recordingId) =>
   api.delete(`/meetings/${meetingId}/recording/${recordingId}`);
-export const getMeetingRecordingBlob = (meetingId, recordingId) =>
-  api.get(`/meetings/${meetingId}/recording/${recordingId}/stream`, { responseType: 'blob' });
+// <video src> can't send the Authorization header, so playback goes through a
+// short-lived signed link. The browser then streams with Range requests instead
+// of downloading the whole file first (which timed out on long recordings).
+export const getMeetingRecordingPlayUrl = async (meetingId, recordingId, { download = false } = {}) => {
+  const { data } = await api.post(`/meetings/${meetingId}/recording/${recordingId}/play-link`);
+  const q = new URLSearchParams({ t: data.token, ...(download ? { download: 'true' } : {}) });
+  return `${API_BASE}/meetings/${meetingId}/recording/${recordingId}/play?${q}`;
+};
 export const uploadMeetingRecording = (meetingId, { file, durationSeconds, recordedAt }) => {
   const fd = new FormData();
   fd.append('file', file);

@@ -13,7 +13,7 @@ import {
   listMeetingDocuments, uploadMeetingDocument, updateMeetingDocument, deleteMeetingDocument, downloadMeetingDocument,
   previewMeetingDocument, listMeetingSections, createMeetingSection, deleteMeetingSection,
   createDocumentShareLink, revokeDocumentShareLink, publicDocumentUrl,
-  getMeetingRecording, getMeetingRecordingBlob, deleteMeetingRecording, uploadMeetingRecording,
+  getMeetingRecording, getMeetingRecordingPlayUrl, deleteMeetingRecording, uploadMeetingRecording,
   getMeetingTranscript, generateMeetingTranscript, getRecordingTranscript,
   downloadRecordingTranscript, createMeetingTranscript, editMeetingTranscript, finalizeMeetingTranscript,
   listMeetingSurveys, linkMeetingSurvey, unlinkMeetingSurvey,
@@ -2089,10 +2089,11 @@ const iconBtnStyle = { background: 'transparent', border: '1px solid var(--color
 const emptyStyle = { padding: '14px 0', textAlign: 'center', color: 'var(--color-text-light)', fontSize: '0.85rem' };
 const errStyle = { background: 'var(--color-error-bg)', color: 'var(--color-error-text)', padding: 8, borderRadius: 6, fontSize: '0.82rem', marginBottom: 8 };
 
-// One recording, with an inline player. The file is fetched as a blob because
-// the stream route needs the Authorization header — a bare <video src> would
-// request it unauthenticated and 401. Blob is only created on demand, so
-// opening the Post-meeting tab doesn't pull down every recording.
+// One recording, with an inline player. Play asks for a signed link and the
+// <video> streams it, so a long recording starts at once instead of being
+// downloaded whole first (that timed out: "Could not load the recording.").
+// The link is only requested on demand, so opening the Post-meeting tab
+// doesn't touch every recording.
 function RecordingRow({ meetingId, rec, onDeleted }) {
   const [url, setUrl] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2156,29 +2157,26 @@ function RecordingRow({ meetingId, rec, onDeleted }) {
     }
   };
 
-  // Revoke on unmount, or the blob is held in memory for the tab's lifetime.
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
-
   const load = async () => {
     if (url || loading) return;
     setLoading(true); setErr('');
     try {
-      const res = await getMeetingRecordingBlob(meetingId, rec.id);
-      setUrl(URL.createObjectURL(res.data));
+      setUrl(await getMeetingRecordingPlayUrl(meetingId, rec.id));
     } catch (e) {
-      // The stream route returns a blob, so an error body has to be read back.
-      let detail = 'Could not load the recording.';
-      try { detail = JSON.parse(await e.response?.data?.text())?.detail || detail; } catch { /* keep default */ }
-      setErr(detail);
+      setErr(e.response?.data?.detail || 'Could not load the recording.');
     } finally { setLoading(false); }
   };
 
-  const download = () => {
-    if (!url) return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = (rec.file_path_or_url || 'recording').split('/').pop();
-    document.body.appendChild(a); a.click(); a.remove();
+  // A fresh link with download=true: the server sends it as an attachment and
+  // the browser saves it itself, without holding the file in memory.
+  const download = async () => {
+    try {
+      const a = document.createElement('a');
+      a.href = await getMeetingRecordingPlayUrl(meetingId, rec.id, { download: true });
+      document.body.appendChild(a); a.click(); a.remove();
+    } catch (e) {
+      setErr(e.response?.data?.detail || 'Could not download the recording.');
+    }
   };
 
   const when = rec.recorded_at ? new Date(rec.recorded_at) : new Date(rec.created_at);
@@ -2246,7 +2244,9 @@ function RecordingRow({ meetingId, rec, onDeleted }) {
       )}
       {err && <div style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--color-error-text)' }}>{err}</div>}
       {url && (
-        <video src={url} controls style={{ width: '100%', marginTop: 10, borderRadius: 8, background: 'var(--color-text)' }} />
+        <video src={url} controls style={{ width: '100%', marginTop: 10, borderRadius: 8, background: 'var(--color-text)' }}
+          // The signed link expires after a few hours; drop it so Play fetches a new one.
+          onError={() => { setUrl(null); setErr('Playback stopped. Press Play to load it again.'); }} />
       )}
     </div>
   );

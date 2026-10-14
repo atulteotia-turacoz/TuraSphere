@@ -36,3 +36,39 @@ Groups: `C2_SPEAKING` (4), `C3_ARTICLES` (3), `C5_PUBS_PER_YEAR` (3), `C6_NETWOR
 | `backend/app/api/endpoints/assessment_parameters.py` | `score_group` / `group_max_score` on every create/update/out schema and the user list/custom endpoints. |
 | `backend/app/api/endpoints/assessment.py` | Assessment total and the manual-override re-total use `capped_totals`. `GET /{hcp_id}/parameter-scores` also returns `max_possible`, `category_totals`, and `score_group` / `group_max_score` on each row. |
 | `backend/app/main.py` | Startup migration adds the two columns. Default seed list matches the Excel: max scores, groups, and the 2 new parameters `MEDICAL_REGISTRATION_NO`, `GOVERNMENT_ORGANISATION`. |
+
+## Meeting recordings — egress writes to a folder deploys never replace (2026-10-14)
+
+Recording meeting 19 failed with `open /out/tq-meeting-19-….mp4: no such file or directory`. The egress container mounted `./backend/uploads/meetings/livekit` at `/out`. That folder is inside `backend/`, which deploys replace. Docker ties a bind mount to the folder that existed when the container started, so after a deploy egress keeps writing into the deleted copy. Every recording then fails until egress is restarted. Egress now writes to the live `UPLOAD_DIR`, which deploys never touch. No code or schema change.
+
+**On the server, once:**
+```bash
+mkdir -p /var/www/turaquant/uploads/meetings/livekit
+# 1. root .env (next to docker-compose.yml):
+#      EGRESS_OUT_DIR=/var/www/turaquant/uploads/meetings/livekit
+# 2. docker-compose.yml, egress volumes, replace the /out line with:
+#      - ${EGRESS_OUT_DIR:-./backend/uploads/meetings/livekit}:/out
+# 3. /var/www/turaquant/backend/.env:
+#      EGRESS_HOST_DIR=/var/www/turaquant/uploads/meetings/livekit
+docker compose up -d egress            # recreates egress on the new folder
+sudo systemctl restart turaquant-backend
+bash infra/egress-diag.sh              # section 2b: WRITABLE, host and container inodes match
+```
+Older recordings in `backend/uploads/meetings/livekit` still play, because the API checks that folder as well.
+
+| File | Change |
+|---|---|
+| `docker-compose.yml` (git-ignored, edit the server copy by hand) | egress `/out` mount is `${EGRESS_OUT_DIR:-./backend/uploads/meetings/livekit}`. |
+| `.env` (root) | `EGRESS_OUT_DIR=/var/www/turaquant/uploads/meetings/livekit`. |
+| `backend/.env.production` | `EGRESS_HOST_DIR=/var/www/turaquant/uploads/meetings/livekit`. |
+| `deployment/LIVEKIT_PRODUCTION.md` | §5.2 documents the egress output folder. |
+
+## Meeting recordings — long recordings stream instead of downloading whole (2026-10-14)
+
+Play on a long recording showed "Could not load the recording.". The browser downloaded the whole MP4 before it started playing, and the request gave up after 2 minutes. Play now gets a signed link for that one recording, which lasts 6 hours. The `<video>` element streams from it with Range requests, so playback starts at once and seeking works. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/meeting_transcripts.py` | New `POST /meetings/{id}/recording/{rid}/play-link` (organizer only, checks the file exists, returns a token valid for 6 h). New `GET /meetings/{id}/recording/{rid}/play?t=…[&download=true]`, no header auth: the token must match this recording, and the user must still be active and still the organizer. `/stream` is unchanged; it shares the new `_recording_path_or_404` / `_recording_file_response` helpers. |
+| `backend/app/core/security.py` | `get_current_user` rejects tokens that carry `typ` (play links, client-portal sessions). A link copied from a log can't be used to log in. |
+

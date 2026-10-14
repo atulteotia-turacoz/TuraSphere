@@ -16,3 +16,11 @@ The results page uses `max_possible` and `category_totals` from `GET /assessment
 | File | Change |
 |---|---|
 | `frontend/src/pages/ResultsPage.js` | Score meter, "Max Possible", category headers and the PDF export use the capped totals. The default when there are no parameter rows is now 50 instead of 55. |
+
+## Meeting recordings — long recordings stream instead of downloading whole (2026-10-14)
+
+| File | Change |
+|---|---|
+| `frontend/src/services/api.js` | `getMeetingRecordingBlob` replaced by `getMeetingRecordingPlayUrl(meetingId, recordingId, { download })`. It gets a play link and returns the streaming URL. |
+| `frontend/src/pages/advisoryBoards/MeetingDetail.js` | `RecordingRow`: Play sets the `<video src>` to the streaming URL (no blob). The Video button saves the file through a `download=true` link. If the player errors (for example, an expired link) it says so and Play loads a fresh link. |
+
