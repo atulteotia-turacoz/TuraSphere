@@ -12,8 +12,11 @@ import {
   submitDocumentApproval, getClientEngagement,
   clientPortalLogin, setClientSession, clearClientSession, getClientSurveyResponses,
   getClientDiscussion, addClientSessionComment, deleteClientSessionComment,
-  addClientComment, deleteClientComment,
+  addClientComment, deleteClientComment, getClientLiveKitToken, getClientChat, sendClientChat, getClientPolls,
+  listClientRoomDocuments, previewClientRoomDocument,
 } from '../services/api';
+import LiveKitRoom from './advisoryBoards/LiveKitRoom';
+import MeetingChatPanel from './advisoryBoards/MeetingChatPanel';
 import { downloadSurveyCsv } from '../utils/surveyCsv';
 import EngagementDashboard, { SurveyResults } from './advisoryBoards/EngagementDashboard';
 import SessionDiscussion from './advisoryBoards/SessionDiscussion';
@@ -72,6 +75,8 @@ export default function PublicClientPortalPage() {
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState('');
   const [tab, setTab] = useState('dashboard');
+  // The meeting the client has opened in the in-app (LiveKit) room, if any.
+  const [roomMeeting, setRoomMeeting] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +133,34 @@ export default function PublicClientPortalPage() {
   if (portal.locked) {
     return <ClientLockScreen token={token} portal={portal} onUnlocked={load} />;
   }
+
+  if (roomMeeting) return (
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-text)', color: 'var(--color-text-inverse)' }}>
+      <header style={{ flexShrink: 0, height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <span style={{ fontWeight: 600, fontSize: '0.95rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {roomMeeting.title || 'Meeting'}
+        </span>
+        <button onClick={() => setRoomMeeting(null)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--color-error)', border: 'none', color: 'var(--color-text-inverse)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+          <LogOut size={15} /> Leave
+        </button>
+      </header>
+      {/* Chat panel on the LEFT, video on the right — same split as the
+          expert's room on the join page. */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <div style={{ flex: '0 0 30%', maxWidth: 380, minWidth: 280, background: 'var(--color-surface)', color: 'var(--color-text)', borderRight: '1px solid rgba(255,255,255,0.12)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <ClientRoomPanel token={token} meetingId={roomMeeting.id} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <LiveKitRoom
+            sessionKey={`client-${token}-${roomMeeting.id}`}
+            fetchToken={() => getClientLiveKitToken(token, roomMeeting.id)}
+            onLeave={() => setRoomMeeting(null)}
+          />
+        </div>
+      </div>
+    </div>
+  );
 
   const { client, board } = portal;
   const st = BOARD_STATUS[board.status] || BOARD_STATUS.planning;
@@ -224,7 +257,7 @@ export default function PublicClientPortalPage() {
       <div className="cp-col" style={{ padding: '22px 20px 56px' }}>
         {tab === 'dashboard' && (
           <ClientDashboardTab token={token} board={board} meetings={portal.meetings}
-                              meetingId={engagementMeetingId} onGo={setTab} />
+                              meetingId={engagementMeetingId} onGo={setTab} onJoin={setRoomMeeting} />
         )}
         {tab === 'status' && <StatusTab board={board} meetings={portal.meetings} />}
         {/* Documents and Messages are single lists — held to a readable column
@@ -255,6 +288,187 @@ export default function PublicClientPortalPage() {
       </div>
     </div>
   );
+}
+
+// The client's side panel in the meeting room — the organizer's Polls /
+// Surveys / Chat tabs. The organizer's tabs link out to the platform's polling
+// and survey pages, which need a login, so the client reads the results here.
+const ROOM_TABS = [
+  { key: 'polls', label: 'Polls', Icon: BarChart3 },
+  { key: 'surveys', label: 'Surveys', Icon: ClipboardList },
+  { key: 'chat', label: 'Chat', Icon: MessageSquare },
+  // Only the material filed for use DURING the meeting — the rest is on the
+  // dashboard's Documents tab already.
+  { key: 'docs', label: 'Documents', Icon: FileText },
+];
+
+function ClientRoomPanel({ token, meetingId }) {
+  const [tab, setTab] = useState('polls');
+  // Memoised because MeetingChatPanel keys its polling effect on these.
+  const fetchChat = useCallback((afterId) => getClientChat(token, meetingId, afterId), [token, meetingId]);
+  const sendChat = useCallback((body) => sendClientChat(token, meetingId, body), [token, meetingId]);
+  return (
+    <>
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border-light)', flexShrink: 0 }}>
+        {ROOM_TABS.map(t => {
+          const active = tab === t.key;
+          const Icon = t.Icon;
+          return (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              style={{
+                flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '12px 8px', border: 'none', background: 'transparent', cursor: 'pointer',
+                fontSize: '0.82rem', fontWeight: 600,
+                color: active ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                borderBottom: `2px solid ${active ? 'var(--color-primary)' : 'transparent'}`,
+              }}>
+              <Icon size={15} /> {t.label}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflow: tab === 'chat' ? 'hidden' : 'auto', padding: 14 }}>
+        {tab === 'polls' && <RoomPolls token={token} meetingId={meetingId} />}
+        {tab === 'surveys' && <RoomSurveys token={token} meetingId={meetingId} />}
+        {tab === 'chat' && <MeetingChatPanel fetchChat={fetchChat} sendChat={sendChat} />}
+        {tab === 'docs' && <RoomDocuments token={token} meetingId={meetingId} />}
+      </div>
+    </>
+  );
+}
+
+// Live tallies, re-read every 10s so votes cast during the meeting show up
+// without the client having to refresh.
+function RoomPolls({ token, meetingId }) {
+  const [polls, setPolls] = useState(null);
+  const [err, setErr] = useState('');
+  const load = useCallback(() => getClientPolls(token, meetingId)
+    .then(r => { setPolls(r.data || []); setErr(''); })
+    .catch(() => setErr('Could not load polls.')), [token, meetingId]);
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 10000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  if (err) return <p style={{ fontSize: '0.84rem', color: 'var(--color-error)' }}>{err}</p>;
+  if (polls === null) return <div style={{ textAlign: 'center', padding: 20 }}><Loader size={18} className="spinning" /></div>;
+  if (polls.length === 0) return <p style={{ fontSize: '0.84rem', color: 'var(--color-text-light)' }}>No polls linked to this meeting yet.</p>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {polls.map(pl => (
+        <div key={pl.id} style={{ border: '1px solid var(--color-border-light)', borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{pl.title}</span>
+            <span style={{ fontSize: '0.74rem', color: 'var(--color-text-secondary)', flexShrink: 0 }}>
+              {pl.total_votes} vote{pl.total_votes === 1 ? '' : 's'} · {pl.status}
+            </span>
+          </div>
+          {(pl.questions || []).map((q, qi) => {
+            const counts = pl.tallies?.[String(qi)] || {};
+            const total = Object.values(counts).reduce((a, b) => a + b, 0);
+            return (
+              <div key={qi} style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: 5 }}>{q.title}</div>
+                {(q.options || []).map((o, oi) => {
+                  const n = counts[String(oi)] || 0;
+                  const pct = total ? Math.round((100 * n) / total) : 0;
+                  return (
+                    <div key={oi} style={{ marginBottom: 4 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem' }}>
+                        <span>{o.text}</span><span style={{ color: 'var(--color-text-secondary)' }}>{n} · {pct}%</span>
+                      </div>
+                      <div style={{ height: 5, borderRadius: 3, background: 'var(--color-surface-raised)' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', borderRadius: 3, background: 'var(--color-primary)' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Opens in its own browser tab rather than a modal: the client presents by
+// sharing that tab with Share screen, and a modal would share the room itself.
+function RoomDocuments({ token, meetingId }) {
+  const [docs, setDocs] = useState(null);
+  const [err, setErr] = useState('');
+  const [openErr, setOpenErr] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    listClientRoomDocuments(token, meetingId)
+      .then(r => { if (!cancelled) setDocs(r.data || []); })
+      .catch(() => { if (!cancelled) setErr('Could not load documents.'); });
+    return () => { cancelled = true; };
+  }, [token, meetingId]);
+
+  const open = async (doc) => {
+    setOpenErr('');
+    // Opened before the request so the browser treats it as the click's popup.
+    const win = window.open('', '_blank');
+    try {
+      const res = await previewClientRoomDocument(token, meetingId, doc.id);
+      const type = res.data.type || (doc.preview_kind === 'pdf' ? 'application/pdf' : doc.mime_type);
+      const url = window.URL.createObjectURL(new Blob([res.data], { type }));
+      if (win) { win.location.href = url; } else { window.open(url, '_blank'); }
+    } catch (e) {
+      if (win) win.close();
+      let msg = 'Could not open this document.';
+      try { msg = JSON.parse(await e.response?.data?.text())?.detail || msg; } catch { /* keep default */ }
+      setOpenErr(msg);
+    }
+  };
+
+  if (err) return <p style={{ fontSize: '0.84rem', color: 'var(--color-error)' }}>{err}</p>;
+  if (docs === null) return <div style={{ textAlign: 'center', padding: 20 }}><Loader size={18} className="spinning" /></div>;
+  if (docs.length === 0) return <p style={{ fontSize: '0.84rem', color: 'var(--color-text-light)' }}>No documents filed for use during this meeting.</p>;
+
+  return (
+    <div>
+      <p style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', margin: '0 0 10px' }}>
+        Open a document, then use Share screen and pick its tab to present it.
+      </p>
+      {openErr && <p style={{ fontSize: '0.8rem', color: 'var(--color-error)', margin: '0 0 8px' }}>{openErr}</p>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {docs.map(d => (
+          <div key={d.id} style={{ border: '1px solid var(--color-border-light)', borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '0.86rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</div>
+              {(d.session_title || d.section_title) && (
+                <div style={{ fontSize: '0.74rem', color: 'var(--color-text-secondary)' }}>{d.session_title || d.section_title}</div>
+              )}
+            </div>
+            <button className="btn btn-sm btn-outline" onClick={() => open(d)} style={{ flexShrink: 0 }}>
+              <ExternalLink size={13} /> Open
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RoomSurveys({ token, meetingId }) {
+  const [surveys, setSurveys] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    getClientEngagement(token, meetingId)
+      .then(r => { if (!cancelled) setSurveys(r.data.surveys || []); })
+      .catch(() => { if (!cancelled) setErr('Could not load surveys.'); });
+    return () => { cancelled = true; };
+  }, [token, meetingId]);
+
+  if (err) return <p style={{ fontSize: '0.84rem', color: 'var(--color-error)' }}>{err}</p>;
+  if (surveys === null) return <div style={{ textAlign: 'center', padding: 20 }}><Loader size={18} className="spinning" /></div>;
+  if (surveys.length === 0) return <p style={{ fontSize: '0.84rem', color: 'var(--color-text-light)' }}>No surveys linked to this meeting yet.</p>;
+  return <SurveyResults surveys={surveys} />;
 }
 
 function StatusTab({ board, meetings }) {
@@ -866,7 +1080,7 @@ function ClientExpertsTab({ token, meetingId }) {
 
 // The landing view. Reads the same engagement payload as the other tabs, so
 // every number here is the one the detail tab will show.
-function ClientDashboardTab({ token, board, meetings, meetingId, onGo }) {
+function ClientDashboardTab({ token, board, meetings, meetingId, onGo, onJoin }) {
   const [data, setData] = useState(null);
   const [docs, setDocs] = useState(null);
   const [thread, setThread] = useState(null);
@@ -954,6 +1168,22 @@ function ClientDashboardTab({ token, board, meetings, meetingId, onGo }) {
                   {daysAway != null && daysAway > 0 && ` · in ${daysAway} day${daysAway === 1 ? '' : 's'}`}
                   {nextMeeting.status === 'live' && ' · live now'}
                 </div>
+
+                {/* In-app (LiveKit) meetings open in the portal; a Zoom meeting
+                    without an in-app session falls back to its external link. */}
+                {nextMeeting.joinable && (nextMeeting.video_provider === 'livekit' || nextMeeting.join_url) && (
+                  <div style={{ marginTop: 12 }}>
+                    {nextMeeting.video_provider === 'livekit' ? (
+                      <button className="btn btn-primary btn-sm" onClick={() => onJoin(nextMeeting)}>
+                        <Video size={14} /> Join meeting
+                      </button>
+                    ) : (
+                      <a className="btn btn-primary btn-sm" href={nextMeeting.join_url} target="_blank" rel="noopener noreferrer">
+                        <Video size={14} /> Join meeting <ExternalLink size={12} />
+                      </a>
+                    )}
+                  </div>
+                )}
 
                 {details && (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',

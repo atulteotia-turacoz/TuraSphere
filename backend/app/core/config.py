@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     # hello hello" was detected as French and transcribed as "à l'autre".
     TRANSCRIBE_LANGUAGE: str = "en"
 
+    # Extra fonts for the Office -> PDF preview (LibreOffice). A deck set in
+    # Trebuchet MS / Calibri / Aptos is drawn in a substitute serif when the
+    # converter can't see those fonts, which is the "design mismatch". Every
+    # .ttf/.otf here is handed to each conversion. Blank = backend/fonts.
+    PREVIEW_FONTS_DIR: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -16,3 +16,9 @@
 
 # Docker Compose
 /docker-compose.yml
+
+# Preview fonts are licensed — each server fills backend/fonts itself
+/backend/fonts/*.ttf
+/backend/fonts/*.otf
+/backend/fonts/*.ttc
+/backend/fonts/*.TTF

@@ -28,6 +28,7 @@ from app.models.meeting_recording import MeetingRecording, RecordingSource
 from app.models.meeting_transcript_segment import MeetingTranscriptSegment
 from app.services import livekit_service, meeting_access, account_config, live_transcription
 from app.api.endpoints.meeting_transcripts import _is_organizer_or_admin
+from app.api.endpoints.meetings import _participant_identity
 
 router = APIRouter(tags=["MABM - LiveKit"])
 
@@ -128,9 +129,10 @@ def get_livekit_token_by_join_token(
     _joinable_or_410(meeting)
 
     perms = set(meeting_access.parse_permissions(p.permissions))
-    name = None
-    if p.user:
-        name = p.user.full_name
+    # Same resolver as chat and the roster. KOLs are linked through hcp_id /
+    # board_kol_id, not a platform user, so reading p.user alone named every
+    # KOL "Guest" in the room.
+    name, email, _org = _participant_identity(p)
 
     # Attendance, same as the Zoom path — entering the room counts as joining.
     from app.models.meeting_participant import InviteStatus
@@ -143,7 +145,7 @@ def get_livekit_token_by_join_token(
     return _token_response(
         db, meeting,
         identity=f"participant-{p.id}",
-        display_name=name or "Guest",
+        display_name=name or email or "Guest",
         role=_enum_value(p.role),
         is_organizer=False,
         can_speak=("speak" in perms) or bool(p.can_speak),

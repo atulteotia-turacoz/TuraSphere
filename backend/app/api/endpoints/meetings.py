@@ -374,6 +374,9 @@ def _participant_to_dict(p: MeetingParticipant) -> dict:
         # builds the full URL as `${origin}/meeting/join/${join_token}`.
         "join_token": p.access_token,
         "join_path": f"/meeting/join/{p.access_token}" if p.access_token else None,
+        # The code the join page asks for, so the organizer can pass it on by
+        # hand when the invite email didn't arrive. Organizer-side list only.
+        "access_code": p.access_code,
         "invited_at": p.invited_at.isoformat() if p.invited_at else None,
         "joined_at": p.joined_at.isoformat() if p.joined_at else None,
         "left_at": p.left_at.isoformat() if p.left_at else None,

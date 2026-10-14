@@ -24,3 +24,43 @@ The results page uses `max_possible` and `category_totals` from `GET /assessment
 | `frontend/src/services/api.js` | `getMeetingRecordingBlob` replaced by `getMeetingRecordingPlayUrl(meetingId, recordingId, { download })`. It gets a play link and returns the streaming URL. |
 | `frontend/src/pages/advisoryBoards/MeetingDetail.js` | `RecordingRow`: Play sets the `<video src>` to the streaming URL (no blob). The Video button saves the file through a `download=true` link. If the player errors (for example, an expired link) it says so and Play loads a fresh link. |
 
+
+## Client portal — Join meeting link (2026-10-14)
+
+| File | Change |
+|---|---|
+| `frontend/src/services/api.js` | New `getClientLiveKitToken(token, meetingId)`. |
+| `frontend/src/pages/PublicClientPortalPage.js` | "Join meeting" button in the dashboard's Next meeting card while the meeting is scheduled/live. A LiveKit meeting opens a full-screen in-app room (`LiveKitRoom`) with a Leave button. A Zoom meeting opens its `join_url` in a new tab. |
+
+## Client meeting room — chat panel (2026-10-14)
+
+| File | Change |
+|---|---|
+| `frontend/src/services/api.js` | New `getClientChat(token, meetingId, afterId)` and `sendClientChat(token, meetingId, body)`. |
+| `frontend/src/pages/PublicClientPortalPage.js` | The client's meeting room uses the expert room's layout: Chat panel on the left (`ClientRoomPanel`, using `MeetingChatPanel`), video on the right. |
+
+## Client meeting room — Polls / Surveys / Chat tabs (2026-10-14)
+
+| File | Change |
+|---|---|
+| `frontend/src/services/api.js` | New `getClientPolls(token, meetingId)`. |
+| `frontend/src/pages/PublicClientPortalPage.js` | `ClientRoomPanel` has the organizer's tabs: Polls (live tallies, refreshed every 10 s), Surveys (`SurveyResults` from the engagement payload) and Chat. The video bar shows Share screen because the token now allows it. |
+
+## Client meeting room — Documents tab (2026-10-14)
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/PublicClientPortalPage.js` | New Documents tab in `ClientRoomPanel` (`RoomDocuments`). It lists this meeting's documents with phase `during` that are shared with the client. Open shows the preview PDF (Office files converted) in a new browser tab, so the client can present it with Share screen. |
+
+## Client meeting room — Documents tab uses room endpoints (2026-10-14)
+
+| File | Change |
+|---|---|
+| `frontend/src/services/api.js` | New `listClientRoomDocuments(token, meetingId)` and `previewClientRoomDocument(token, meetingId, documentId)`. |
+| `frontend/src/pages/PublicClientPortalPage.js` | `RoomDocuments` uses these instead of filtering the client-shared list. |
+
+## Meeting invites & access — copy join code (2026-10-14)
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/advisoryBoards/MeetingDetail.js` | `ParticipantsSection`: new key button next to Copy link that copies the participant's join code, with a tick when copied. The tooltip shows the code. `ParticipantSettings` (the expanded row) has a "Join code" field with its own Copy button. When there is no code yet, it says the code is created when the invite is sent. |

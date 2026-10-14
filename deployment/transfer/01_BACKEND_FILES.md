@@ -72,3 +72,67 @@ Play on a long recording showed "Could not load the recording.". The browser dow
 | `backend/app/api/endpoints/meeting_transcripts.py` | New `POST /meetings/{id}/recording/{rid}/play-link` (organizer only, checks the file exists, returns a token valid for 6 h). New `GET /meetings/{id}/recording/{rid}/play?t=…[&download=true]`, no header auth: the token must match this recording, and the user must still be active and still the organizer. `/stream` is unchanged; it shares the new `_recording_path_or_404` / `_recording_file_response` helpers. |
 | `backend/app/core/security.py` | `get_current_user` rejects tokens that carry `typ` (play links, client-portal sessions). A link copied from a log can't be used to log in. |
 
+
+## Client portal — Join meeting link (2026-10-14)
+
+The client dashboard had no way to join the meeting. The client is not a meeting participant, so they had no join link, and a LiveKit meeting has no external URL. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/client_portal.py` | `GET /public/client/{token}`: each meeting now also returns `joinable`, `video_provider` and `join_url` (only while scheduled/live). New `POST /public/client/{token}/meetings/{meeting_id}/livekit/token`: goes through the password gate, the meeting must belong to the client's board and be joinable. Identity `client-{id}`, role `client`. Mic/camera allowed; no screen share, room admin or recording. |
+
+## Meeting room — KOLs show as "Guest" (2026-10-14)
+
+KOLs who joined the LiveKit room through their join link showed up as "Guest" with a "G" avatar. The token took the name only from a linked platform user. KOLs are linked through `hcp_id` / `board_kol_id`, so they had no name. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/meeting_livekit.py` | `POST /public/meeting/join/{token}/livekit/token` gets the display name from `_participant_identity` (the resolver chat and the roster use). It falls back to the email, then "Guest". |
+
+## Client meeting room — name and chat panel (2026-10-14)
+
+No schema change. Client chat rows have neither `user_id` nor `participant_id`; `sender_role` is `client`.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/client_portal.py` | Client LiveKit display name is now just the client's name (it was "Name (Client)", which made the avatar "A("). New `GET` / `POST /public/client/{token}/meetings/{meeting_id}/chat`: same chat thread as the room, password-gated, meeting must be on the client's board. New helper `_client_meeting_or_404`. |
+
+## Client meeting room — screen share + polls (2026-10-14)
+
+No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/client_portal.py` | Client LiveKit token now includes screen share (`can_present=True`), so the client can present slides. Still no room admin or recording. New `GET /public/client/{token}/meetings/{meeting_id}/polls`: the meeting's linked polls with questions, per-option tallies and total votes. Uses `_get_questions` / `_compute_tallies` from `polls.py`. |
+
+## Document preview — PPT design mismatch (2026-10-14)
+
+PowerPoint previews looked different from the deck. LibreOffice only had its own fonts, so Trebuchet MS and Aptos were drawn in Linux Libertine (a serif) and the text reflowed. Conversions now get the fonts in `PREVIEW_FONTS_DIR` (default `backend/fonts`), placed in the conversion profile's `user/fonts`. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/services/document_preview.py` | `_install_fonts()` symlinks every .ttf/.otf/.ttc from the fonts folder into each conversion's profile. The cache key now includes `_CONVERTER_VERSION` ("2") and the font list, so old previews re-render. |
+| `backend/app/core/config.py` | New `PREVIEW_FONTS_DIR` (blank = `backend/fonts`). |
+| `backend/fonts/README.md` | New. How to fill the folder on Mac and on Linux. |
+| `.gitignore` | Font files in `backend/fonts/` are ignored (licensed). |
+
+**Live server steps:**
+1. `sudo apt install ttf-mscorefonts-installer fonts-crosextra-carlito fonts-crosextra-caladea && sudo fc-cache -f`
+2. Copy `Aptos*.ttf` into `backend/fonts/`. They come with Office, or download them from Microsoft.
+3. Restart the API.
+
+## Client meeting room — During Meeting documents (2026-10-14)
+
+The Documents tab in the client's room was empty because it required `client_visible`, and the During Meeting decks are usually shared only with KOLs. The room now lists every enabled `during` document of the meeting, whatever `client_visible` says. That flag still controls the dashboard's Documents tab. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/client_portal.py` | New `GET /public/client/{token}/meetings/{meeting_id}/room-documents` and `GET …/room-documents/{document_id}/preview`. Password-gated, the meeting must be on the client's board, the document must be phase `during` and enabled. The preview converts Office files to PDF and falls back to the original file. |
+
+## Meeting invites — join code in the participant list (2026-10-14)
+
+No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/meetings.py` | The participant serializer (organizer-side list) now also returns `access_code`. |

@@ -3,7 +3,7 @@ import {
   ArrowLeft, Clock, Users, Video, MapPin, Plus, Trash2, Download,
   Upload, Play, Square, ExternalLink, Edit3, CheckCircle, MessageSquare, FileText,
   Eye, EyeOff, ClipboardList, BarChart3, X, Send, BookOpen,
-  Link2, Link2Off, Copy, RefreshCw, RotateCcw, Shield, ChevronDown, ChevronRight, UserCheck, Briefcase, Maximize2,
+  Link2, Link2Off, Copy, RefreshCw, RotateCcw, Shield, KeyRound, ChevronDown, ChevronRight, UserCheck, Briefcase, Maximize2,
 } from 'lucide-react';
 import {
   getMeeting, startMeeting, endMeeting, reopenMeeting,
@@ -692,6 +692,19 @@ export function ParticipantsSection({ meetingId, title = 'Participants', reloadK
     }
   };
 
+  // Separate "copied" marker from the link's, so the two buttons don't both tick.
+  const [copiedCodeId, setCopiedCodeId] = useState(null);
+  const copyCode = async (p) => {
+    if (!p.access_code) return;
+    try {
+      await navigator.clipboard.writeText(p.access_code);
+      setCopiedCodeId(p.id);
+      setTimeout(() => setCopiedCodeId(c => (c === p.id ? null : c)), 1600);
+    } catch {
+      window.prompt('Copy this participant’s join code:', p.access_code);
+    }
+  };
+
   const regenerate = async (p) => {
     if (!window.confirm('Generate a new join link? The current link will stop working.')) return;
     try { await regenerateParticipantJoinToken(meetingId, p.id); load(); }
@@ -780,6 +793,10 @@ export function ParticipantsSection({ meetingId, title = 'Participants', reloadK
               <button onClick={() => copyLink(p)} title="Copy personal join link" style={iconBtnStyle} disabled={!p.join_token}>
                 {copiedId === p.id ? <CheckCircle size={13} style={{ color: 'var(--color-success)' }} /> : <Copy size={13} />}
               </button>
+              <button onClick={() => copyCode(p)} style={iconBtnStyle} disabled={!p.access_code}
+                      title={p.access_code ? `Copy join code (${p.access_code})` : 'No join code yet — it is created when the invite email is sent'}>
+                {copiedCodeId === p.id ? <CheckCircle size={13} style={{ color: 'var(--color-success)' }} /> : <KeyRound size={13} />}
+              </button>
               <button onClick={() => setExpandedId(isOpen ? null : p.id)} title="Role & permissions" style={iconBtnStyle}>
                 {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </button>
@@ -795,6 +812,8 @@ export function ParticipantsSection({ meetingId, title = 'Participants', reloadK
                 onRegenerate={() => regenerate(p)}
                 onCopy={() => copyLink(p)}
                 copied={copiedId === p.id}
+                onCopyCode={() => copyCode(p)}
+                codeCopied={copiedCodeId === p.id}
               />
             )}
           </div>
@@ -805,7 +824,7 @@ export function ParticipantsSection({ meetingId, title = 'Participants', reloadK
 }
 
 // Expandable per-participant role + permissions + personal join link editor
-function ParticipantSettings({ p, joinLink, onChangeRole, onSavePermissions, onRegenerate, onCopy, copied }) {
+function ParticipantSettings({ p, joinLink, onChangeRole, onSavePermissions, onRegenerate, onCopy, copied, onCopyCode, codeCopied }) {
   const [perms, setPerms] = useState(p.permissions || []);
   const [dirty, setDirty] = useState(false);
 
@@ -836,6 +855,25 @@ function ParticipantSettings({ p, joinLink, onChangeRole, onSavePermissions, onR
         <div style={{ fontSize: '0.72rem', color: 'var(--color-text-light)', marginTop: 4 }}>
           Share this unique link with {p.user_name || 'this participant'}; it identifies them individually and applies their role/permissions.
         </div>
+      </div>
+
+      {/* Join code — the join page asks for it alongside the link */}
+      <div>
+        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <KeyRound size={12} /> Join code
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input readOnly value={p.access_code || '— not created yet —'} onFocus={e => e.target.select()}
+                 style={{ ...inputStyle, fontSize: '0.78rem', flex: 1, background: 'var(--color-surface)', letterSpacing: p.access_code ? 1.5 : 0, fontWeight: p.access_code ? 700 : 400 }} />
+          <button className="btn btn-sm btn-ghost" onClick={onCopyCode} title="Copy code" disabled={!p.access_code}>
+            {codeCopied ? <CheckCircle size={13} style={{ color: 'var(--color-success)' }} /> : <Copy size={13} />}
+          </button>
+        </div>
+        {!p.access_code && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--color-text-light)', marginTop: 4 }}>
+            The code is created when the invite email is sent. Use Resend to create one.
+          </div>
+        )}
       </div>
 
       {/* Role */}

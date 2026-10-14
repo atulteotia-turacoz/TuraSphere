@@ -418,6 +418,18 @@ export const getJoinMaterialInline = (token, documentId) =>
 export const getMeetingEngagement = (meetingId) => api.get(`/meetings/${meetingId}/engagement`);
 export const getClientEngagement = (token, meetingId) =>
   api.get(`/public/client/${token}/meetings/${meetingId}/engagement`);
+export const getClientLiveKitToken = (token, meetingId) =>
+  api.post(`/public/client/${token}/meetings/${meetingId}/livekit/token`);
+export const getClientChat = (token, meetingId, afterId) =>
+  api.get(`/public/client/${token}/meetings/${meetingId}/chat`, { params: afterId ? { after_id: afterId } : {} });
+export const sendClientChat = (token, meetingId, body) =>
+  api.post(`/public/client/${token}/meetings/${meetingId}/chat`, { body });
+export const getClientPolls = (token, meetingId) =>
+  api.get(`/public/client/${token}/meetings/${meetingId}/polls`);
+export const listClientRoomDocuments = (token, meetingId) =>
+  api.get(`/public/client/${token}/meetings/${meetingId}/room-documents`);
+export const previewClientRoomDocument = (token, meetingId, documentId) =>
+  api.get(`/public/client/${token}/meetings/${meetingId}/room-documents/${documentId}/preview`, { responseType: 'blob' });
 
 // Session discussion — one thread per session, written by the panel, the client
 // and the project team alike. Three callers, one conversation.

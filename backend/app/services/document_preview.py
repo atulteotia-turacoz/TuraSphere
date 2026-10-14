@@ -15,6 +15,13 @@ its size and its mtime — a 10 MB deck takes seconds to convert, and the client
 flips between documents. A changed source file produces a new key, so a stale
 preview can never be served.
 
+Fonts: a converted deck only looks like the original if LibreOffice has the
+fonts it was designed in. Anything it lacks is replaced — Trebuchet MS and
+Aptos came out as Linux Libertine, a serif — and the text reflows. The fonts in
+PREVIEW_FONTS_DIR (default backend/fonts) are placed in each conversion's
+profile `user/fonts`, which LibreOffice loads on every platform. Microsoft fonts
+can't be committed, so that folder is filled per server (see its README).
+
 Poppler is NOT needed: the PDF goes straight into an <iframe>, so nothing has to
 be rasterised.
 """
@@ -86,9 +93,50 @@ def _cache_dir() -> str:
     return path
 
 
+# Bump to throw away every cached preview, e.g. after a change to how
+# conversions are made. 2: fonts from PREVIEW_FONTS_DIR (2026-10-14).
+_CONVERTER_VERSION = "2"
+
+_FONT_EXT = (".ttf", ".otf", ".ttc")
+
+
+def _fonts_dir() -> str:
+    if settings.PREVIEW_FONTS_DIR:
+        return settings.PREVIEW_FONTS_DIR
+    backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(backend_root, "fonts")
+
+
+def _font_files() -> list:
+    d = _fonts_dir()
+    try:
+        return sorted(os.path.join(d, f) for f in os.listdir(d) if f.lower().endswith(_FONT_EXT))
+    except OSError:
+        return []
+
+
+def _install_fonts(profile_dir: str) -> None:
+    """Make the extra fonts visible to one conversion via its profile's
+    user/fonts. Symlinked where possible — a font set is tens of megabytes."""
+    files = _font_files()
+    if not files:
+        return
+    dest = os.path.join(profile_dir, "user", "fonts")
+    os.makedirs(dest, exist_ok=True)
+    for f in files:
+        target = os.path.join(dest, os.path.basename(f))
+        try:
+            os.symlink(f, target)
+        except OSError:
+            shutil.copy2(f, target)
+
+
 def _cache_path(src: str) -> str:
     st = os.stat(src)
-    key = f"{os.path.realpath(src)}|{st.st_size}|{int(st.st_mtime)}"
+    # The font set is part of the key: adding a missing font must re-render
+    # previews that were drawn in a substitute.
+    fonts = ",".join(os.path.basename(f) for f in _font_files())
+    key = f"{_CONVERTER_VERSION}|{os.path.realpath(src)}|{st.st_size}|{int(st.st_mtime)}|{fonts}"
     return os.path.join(_cache_dir(), hashlib.sha1(key.encode()).hexdigest() + ".pdf")
 
 
@@ -105,6 +153,7 @@ def _convert_to_pdf(src: str) -> str:
         )
 
     with tempfile.TemporaryDirectory() as outdir:
+        _install_fonts(os.path.join(outdir, "profile"))
         try:
             proc = subprocess.run(
                 # -env:UserInstallation gives each conversion its own profile, so

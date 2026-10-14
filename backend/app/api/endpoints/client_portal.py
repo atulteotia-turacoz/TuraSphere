@@ -25,20 +25,24 @@ from app.core.database import get_db
 from app.core.security import verify_password, create_access_token, decode_token
 from app.models.advisory_board import AdvisoryBoard
 from app.models.meeting import BoardMeeting, MeetingAgendaItem
-from app.models.meeting_document import MeetingDocument
+from app.models.meeting_document import MeetingDocument, DocumentPhase
 from app.models.board_client import (
     BoardClient, DocumentApproval, ApprovalStatus,
 )
 from app.services.meeting_engagement_stats import build_engagement
 from app.services import document_preview
 from app.services import session_discussion
+from app.services import meeting_chat
 from app.models.meeting_session_comment import MeetingSessionComment
-from app.models.meeting_engagement import MeetingSurvey
+from app.models.meeting_engagement import MeetingSurvey, MeetingPoll
+from app.api.endpoints.polls import _get_questions, _compute_tallies
 # Reused so the client's export and the team's are produced by the same code.
 from app.api.endpoints.surveys import (
     _question_column_keys, _result_column_order, _responses_to_list,
 )
 from app.api.endpoints.advisory_boards import _enum_value
+from app.api.endpoints.meetings import _video_provider
+from app.api.endpoints.meeting_livekit import _token_response, _joinable_or_410
 
 router = APIRouter(tags=["MABM - Client Portal"])
 
@@ -231,10 +235,170 @@ def get_client_portal(token: str, db: Session = Depends(get_db),
                 "title": m.title,
                 "status": _enum_value(m.status),
                 "scheduled_at": m.scheduled_at.isoformat() if m.scheduled_at else None,
+                # What the portal needs to offer a "Join meeting" button: the
+                # in-app stack, and the external link for a Zoom meeting. Both
+                # only while the meeting can actually be joined.
+                "joinable": _enum_value(m.status) in ("scheduled", "live"),
+                "video_provider": _video_provider(m, db),
+                "join_url": m.join_url if _enum_value(m.status) in ("scheduled", "live") else None,
             }
             for m in meetings
         ],
     }
+
+
+@router.post("/public/client/{token}/meetings/{meeting_id}/livekit/token")
+def client_livekit_token(token: str, meeting_id: int, db: Session = Depends(get_db),
+                         x_client_session: Optional[str] = Header(None)):
+    """LiveKit join token for the board's client, so they can sit in on the
+    meeting from the portal. The client is not a meeting participant, so this
+    is the only way in for them on an in-app (LiveKit) meeting.
+
+    Same as the organizer apart from room admin and recording: mic, camera and
+    screen share (which is how they present slides).
+    """
+    client = _authed_client(token, db, x_client_session)
+    meeting = _client_meeting_or_404(client, meeting_id, db)
+    _joinable_or_410(meeting)
+    _touch_last_seen(client, db)
+    return _token_response(
+        db, meeting,
+        identity=f"client-{client.id}",
+        display_name=client.name or client.email or "Client",
+        role="client",
+        is_organizer=False,
+        can_speak=True,
+        can_present=True,
+    )
+
+def _client_meeting_or_404(client: BoardClient, meeting_id: int, db: Session) -> BoardMeeting:
+    meeting = db.query(BoardMeeting).filter(
+        BoardMeeting.id == meeting_id, BoardMeeting.board_id == client.board_id,
+    ).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    return meeting
+
+
+class ClientChatSend(BaseModel):
+    body: str
+
+
+@router.get("/public/client/{token}/meetings/{meeting_id}/chat")
+def client_list_chat(token: str, meeting_id: int, after_id: Optional[int] = None,
+                     db: Session = Depends(get_db),
+                     x_client_session: Optional[str] = Header(None)):
+    """The in-meeting chat for the client's room panel — the same thread the
+    panel and the team see (app.services.meeting_chat)."""
+    client = _authed_client(token, db, x_client_session)
+    meeting = _client_meeting_or_404(client, meeting_id, db)
+    is_open = meeting_chat.chat_is_open(meeting)
+    return {
+        "chat_enabled": is_open,
+        "can_send": is_open,
+        "can_manage": False,
+        "messages": meeting_chat.list_messages(db, meeting.id, after_id=after_id),
+    }
+
+
+@router.post("/public/client/{token}/meetings/{meeting_id}/chat", status_code=201)
+def client_send_chat(token: str, meeting_id: int, data: ClientChatSend,
+                     db: Session = Depends(get_db),
+                     x_client_session: Optional[str] = Header(None)):
+    client = _authed_client(token, db, x_client_session)
+    meeting = _client_meeting_or_404(client, meeting_id, db)
+    if not meeting_chat.chat_is_open(meeting):
+        raise HTTPException(status_code=403, detail="Chat is turned off for this meeting.")
+    body = meeting_chat.clean_body(data.body)
+    if not body:
+        raise HTTPException(status_code=400, detail="Message is empty.")
+    # Neither user_id nor participant_id: the client is neither. sender_name is
+    # denormalised on the row, so the transcript still reads correctly.
+    msg = meeting_chat.post_message(
+        db, meeting.id, body,
+        sender_name=client.name or client.email or "Client",
+        sender_role="client",
+    )
+    return meeting_chat.message_to_dict(msg)
+
+
+@router.get("/public/client/{token}/meetings/{meeting_id}/polls")
+def client_list_polls(token: str, meeting_id: int, db: Session = Depends(get_db),
+                      x_client_session: Optional[str] = Header(None)):
+    """The meeting's live polls with their running tallies, for the Polls tab
+    of the client's room panel. The organizer reads the same numbers on the
+    Polling page; the client has no platform login to get there."""
+    client = _authed_client(token, db, x_client_session)
+    meeting = _client_meeting_or_404(client, meeting_id, db)
+    polls = []
+    for link in db.query(MeetingPoll).filter(MeetingPoll.meeting_id == meeting.id).all():
+        pl = link.poll
+        if not pl:
+            continue
+        questions = _get_questions(pl)
+        polls.append({
+            "id": pl.id,
+            "title": pl.title,
+            "status": _enum_value(pl.status),
+            "questions": questions,
+            "tallies": _compute_tallies(pl.votes, len(questions)),
+            "total_votes": len(pl.votes),
+        })
+    return polls
+
+
+# ── In-call documents ────────────────────────────────────────────────────────
+# What the client can open and present (by sharing its tab) during the meeting:
+# every enabled document filed as "During meeting". Deliberately NOT gated on
+# `client_visible` — that flag puts a document on the client's Documents tab for
+# reading and approval; the presenting material is needed in the call whether
+# or not it was shared there. Pre/post material stays on the dashboard.
+
+def _room_docs_query(meeting: BoardMeeting, db: Session):
+    return db.query(MeetingDocument).filter(
+        MeetingDocument.meeting_id == meeting.id,
+        MeetingDocument.phase == DocumentPhase.during,
+        MeetingDocument.is_enabled == True,  # noqa: E712
+    )
+
+
+@router.get("/public/client/{token}/meetings/{meeting_id}/room-documents")
+def client_room_documents(token: str, meeting_id: int, db: Session = Depends(get_db),
+                          x_client_session: Optional[str] = Header(None)):
+    client = _authed_client(token, db, x_client_session)
+    meeting = _client_meeting_or_404(client, meeting_id, db)
+    return [
+        {
+            "id": d.id,
+            "title": d.title,
+            "section_title": d.section.title if d.section else None,
+            "session_title": d.doc_session.title if d.doc_session else (d.agenda_item.title if d.agenda_item else None),
+            "mime_type": d.mime_type,
+            "preview_kind": document_preview.preview_kind(d.file_path or ""),
+        }
+        for d in _room_docs_query(meeting, db).order_by(MeetingDocument.created_at.asc()).all()
+    ]
+
+
+@router.get("/public/client/{token}/meetings/{meeting_id}/room-documents/{document_id}/preview")
+def client_room_document_preview(token: str, meeting_id: int, document_id: int,
+                                 db: Session = Depends(get_db),
+                                 x_client_session: Optional[str] = Header(None)):
+    """Same as the portal preview (Office files converted to PDF); falls back to
+    the original file when the format can't be shown in a browser."""
+    client = _authed_client(token, db, x_client_session)
+    meeting = _client_meeting_or_404(client, meeting_id, db)
+    doc = _room_docs_query(meeting, db).filter(MeetingDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        path, media_type = document_preview.prepare(doc.file_path or "", doc.mime_type)
+    except document_preview.PreviewError:
+        if not doc.file_path or not os.path.isfile(doc.file_path):
+            raise HTTPException(status_code=404, detail="File not found on server")
+        path, media_type = doc.file_path, doc.mime_type or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=os.path.basename(path),
+                        content_disposition_type="inline")
 
 
 @router.get("/public/client/{token}/meetings/{meeting_id}/agenda")
