@@ -9,6 +9,10 @@
 
 # Python virtual environment
 /myenv/
+/backend/myenv/
+
+# User uploads
+/backend/uploads/
 
 # Deployment and documentation files
 /docker-compose.yaml

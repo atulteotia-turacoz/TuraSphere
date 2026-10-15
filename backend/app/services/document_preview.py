@@ -131,12 +131,32 @@ def _install_fonts(profile_dir: str) -> None:
             shutil.copy2(f, target)
 
 
+_SOFFICE_VERSION = None
+
+
+def _soffice_version() -> str:
+    """LibreOffice's version, read once per process. Part of the cache key: an
+    older LibreOffice draws freeform/rotated shapes in the wrong place, and the
+    previews it made must not outlive an upgrade."""
+    global _SOFFICE_VERSION
+    if _SOFFICE_VERSION is None:
+        binary = _soffice_binary()
+        try:
+            out = subprocess.run([binary, "--version"], capture_output=True, text=True,
+                                 timeout=30).stdout if binary else ""
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        _SOFFICE_VERSION = (out or "").strip().split("\n")[0]
+    return _SOFFICE_VERSION
+
+
 def _cache_path(src: str) -> str:
     st = os.stat(src)
     # The font set is part of the key: adding a missing font must re-render
     # previews that were drawn in a substitute.
     fonts = ",".join(os.path.basename(f) for f in _font_files())
-    key = f"{_CONVERTER_VERSION}|{os.path.realpath(src)}|{st.st_size}|{int(st.st_mtime)}|{fonts}"
+    key = (f"{_CONVERTER_VERSION}|{_soffice_version()}|{os.path.realpath(src)}"
+           f"|{st.st_size}|{int(st.st_mtime)}|{fonts}")
     return os.path.join(_cache_dir(), hashlib.sha1(key.encode()).hexdigest() + ".pdf")
 
 

@@ -136,3 +136,14 @@ No schema change.
 | File | Change |
 |---|---|
 | `backend/app/api/endpoints/meetings.py` | The participant serializer (organizer-side list) now also returns `access_code`. |
+
+## Document preview — LibreOffice version in the cache key (2026-10-15)
+
+On live, previews still had shapes in the wrong place (the swirl lines on the speaker slides ran through the text). The same deck converts correctly with LibreOffice 26.8 locally. Older LibreOffice versions place freeform/rotated shapes wrongly. Previews now regenerate when LibreOffice is upgraded. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/services/document_preview.py` | New `_soffice_version()` (`soffice --version`, read once per process). It is part of the preview cache key. |
+
+**Live server steps (Ubuntu):** upgrade LibreOffice from the official PPA, then restart the API:
+`sudo add-apt-repository -y ppa:libreoffice/ppa && sudo apt update && sudo apt install -y libreoffice-impress libreoffice-writer libreoffice-calc`
