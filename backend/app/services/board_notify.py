@@ -9,6 +9,8 @@ change, meeting start/end, minutes shared/finalized, etc.).
 Every wiring site calls `notify_board(...)` inside a try/except so a notification
 failure never breaks the underlying action.
 """
+import logging
+import threading
 from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -81,6 +83,19 @@ def build_body(title: str, lines: List[str], cta_label: Optional[str] = None, ct
     )
 
 
+def _send_in_background(**kwargs) -> None:
+    """Thread target: sends with its own DB session — the request's session is
+    closed as soon as the response goes out."""
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        email_service.send_email_bulk(db, **kwargs)
+    except Exception:
+        logging.getLogger(__name__).exception("board notification failed")
+    finally:
+        db.close()
+
+
 def notify_board(
     db: Session,
     board_id: int,
@@ -92,8 +107,11 @@ def notify_board(
     include_participants: bool = True,
     meeting_id: Optional[int] = None,
 ) -> int:
-    """Emails the board's team (+ participants) and returns the success count.
-    Best-effort: callers wrap this in try/except."""
+    """Emails the board's team (+ participants) and returns how many were queued.
+
+    Recipients are resolved here, but SMTP runs in a daemon thread: each send can
+    take up to its 20s timeout, and doing that inside the request stalled the API.
+    Outcomes still land in email_logs. Best-effort: callers wrap this in try/except."""
     recipients, owner_id = board_recipients(
         db, board_id,
         include_team=include_team,
@@ -102,13 +120,18 @@ def notify_board(
     )
     if not recipients:
         return 0
-    return email_service.send_email_bulk(
-        db,
-        recipients=recipients,
-        subject=subject,
-        body_html=body_html,
-        kind=kind,
-        board_id=board_id,
-        meeting_id=meeting_id,
-        owner_user_id=owner_id,
-    )
+    threading.Thread(
+        target=_send_in_background,
+        kwargs=dict(
+            recipients=recipients,
+            subject=subject,
+            body_html=body_html,
+            kind=kind,
+            board_id=board_id,
+            meeting_id=meeting_id,
+            owner_user_id=owner_id,
+        ),
+        name=f"board-notify-{board_id}",
+        daemon=True,
+    ).start()
+    return len(recipients)

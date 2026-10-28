@@ -99,7 +99,12 @@ export default function LiveKitRoom({ fetchToken, sessionKey, onLeave, onRecordT
       try {
         const { data } = await fetchToken();
         if (cancelled) return;
-        await room.connect(data.url, data.token);
+        // `?relay=1` on the page URL forces media through the TURN relay — the
+        // path corporate-network guests depend on — so it can be tested from a
+        // network that would otherwise connect directly.
+        const forceRelay = new URLSearchParams(window.location.search).get('relay') === '1';
+        await room.connect(data.url, data.token,
+          forceRelay ? { rtcConfig: { iceTransportPolicy: 'relay' } } : undefined);
         if (cancelled) return;
 
         // What we may publish was decided by the server and is in the token; read

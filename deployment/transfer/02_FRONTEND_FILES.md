@@ -64,3 +64,11 @@ The results page uses `max_possible` and `category_totals` from `GET /assessment
 | File | Change |
 |---|---|
 | `frontend/src/pages/advisoryBoards/MeetingDetail.js` | `ParticipantsSection`: new key button next to Copy link that copies the participant's join code, with a tick when copied. The tooltip shows the code. `ParticipantSettings` (the expanded row) has a "Join code" field with its own Copy button. When there is no code yet, it says the code is created when the invite is sent. |
+
+## Meetings — `?relay=1` forces the TURN relay, for testing external access (2026-10-28)
+
+Goes with the TURN-on-443 server change (see `01_BACKEND_FILES.md`, same date). Adding `?relay=1` (or `&relay=1`) to any meeting room or join page URL connects with `iceTransportPolicy: 'relay'`. Media then only goes through TURN, the same path external clients / KOLs on corporate networks use, so it can be tested from the office. Without the flag nothing changes.
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/advisoryBoards/LiveKitRoom.js` | `room.connect` passes `rtcConfig: { iceTransportPolicy: 'relay' }` when the page URL has `relay=1`. |

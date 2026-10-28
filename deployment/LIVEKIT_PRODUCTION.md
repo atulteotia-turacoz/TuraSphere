@@ -444,7 +444,9 @@ a separate surface — start one and confirm an MP4 lands in
 | "Connecting…" forever, no 101 in nginx access log | Missing `Upgrade`/`Connection` headers in the nginx block (§5.4) |
 | Mixed-content / connection refused in browser console | `LIVEKIT_URL` still `ws://` — must be `wss://` (§6) |
 | Joins fine, participant list correct, **no video** | UDP 7892 blocked — ufw *or* the cloud security group (§5.5) |
-| Same, but only for some participants | Corporate firewall blocking UDP; they should fall back to TCP 7891, so check that port is open too. A TURN server is the real fix — open item |
+| Same, but only for some participants (typically external clients / KOLs: "could not establish pc connection") | Their corporate firewall allows only 443 out. Fixed by TURN on 443 (§12) — check it with `?relay=1` (§12.8) |
+| Sites down / wrong certificate after a CloudPanel change | A vhost is back on `listen 443 ssl` — CloudPanel regenerated it or a new site was added. Move it to `127.0.0.1:10443` (§12.6, §12.9) |
+| `?relay=1` fails, TURN log shows allocations | Relay ports 30000-30200/udp closed in the cloud security group (§12.4) |
 | Media fails after a redeploy that "changed nothing" | `livekit-up.sh` / `set-node-ip.sh` overwrote `LIVEKIT_NODE_IP` with the private IP (§5.2) |
 | Client reconnects every 15s, logs mention `unsupported datachannel … "_data_track"` | `livekit-client` in the frontend is newer than `livekit-server`; they must stay in step (see `docker-compose.yml`) |
 | Recording aborts, "Start signal not received" | Egress cannot reach the node IP, or `EGRESS_TEMPLATE_BASE_URL` unreachable from inside docker (§6) |
@@ -469,7 +471,238 @@ a separate surface — start one and confirm an MP4 lands in
 
 ## 11. Still open
 
-- TURN server for participants behind restrictive corporate firewalls — KOLs
-  often are. Until then, TCP 7891 is the only fallback.
+- ~~TURN server for participants behind restrictive corporate firewalls~~ —
+  done, TURN on 443 (§12).
 - Whether egress moves to its own host once recording volume grows (§1).
 - Backup/retention policy for recordings.
+
+---
+
+## 12. TURN relay on 443 — for clients and KOLs on corporate networks
+
+Added 2026-10-28. **Symptom it fixes:** internal users join fine; a client or KOL
+from another organisation gets "could not establish (pc) connection". Their
+network lets 443 out, so signalling works, but drops UDP 7892 / TCP 7891, so
+media never connects. TURN gives them a relay on 443, which looks like ordinary
+HTTPS to their firewall.
+
+How 443 is shared (nginx already owns it for every site on the box):
+
+```
+client :443 ─► nginx stream (reads SNI, does not decrypt)
+                 ├─ turn.turaquant.turacoz.com ─► nginx TLS (CloudPanel cert) ─► 127.0.0.1:5349 LiveKit TURN
+                 └─ anything else ──────────────► 127.0.0.1:10443 the normal HTTPS vhosts
+```
+
+Repo files: `infra/livekit.yaml` (`turn:`), `docker-compose.yml` (ports; git-ignored,
+edit by hand on the server), `deployment/nginx/stream-443.conf`,
+`deployment/nginx/turaquant.cloudpanel.conf` (listen lines),
+`infra/turn-preflight.sh`. LiveKit hands the TURN URLs and per-participant
+credentials to browsers itself — no backend change.
+
+Run everything below **on the server**, in order, preferably outside meeting
+hours. Only §12.6 touches the websites, and with a reload it is seamless.
+
+```bash
+APP=/home/turacoz-turaquant/htdocs/turaquant.turacoz.com   # where docker-compose.yml lives
+cd $APP
+```
+
+### 12.0 Backups
+
+```bash
+sudo tar czf /root/nginx-backup-$(date +%F-%H%M).tgz /etc/nginx
+cp docker-compose.yml docker-compose.yml.bak-turn
+cp infra/livekit.yaml infra/livekit.yaml.bak-turn
+```
+
+### 12.1 DNS (Cloudflare dashboard)
+
+```bash
+curl -4 -s ifconfig.me; echo          # the origin IP
+```
+
+Add `A  turn.turaquant  <that IP>`, proxy status **DNS only (grey cloud)**.
+Cloudflare cannot carry TURN; an orange cloud breaks it silently.
+
+```bash
+dig +short turn.turaquant.turacoz.com   # must print the origin IP, not 104.x/172.6x
+```
+
+### 12.2 Certificate (CloudPanel)
+
+CloudPanel → **Add Site → Create a Static HTML Site**, domain
+`turn.turaquant.turacoz.com`. Then that site → **SSL/TLS → Actions → New Let's
+Encrypt Certificate**. Renewal is CloudPanel's normal HTTP-01 on port 80, which
+this change does not touch.
+
+```bash
+ls -l /etc/nginx/ssl-certificates/ | grep turn
+# expect turn.turaquant.turacoz.com.crt and .key — the paths stream-443.conf uses
+```
+
+### 12.3 Copy the repo files up, run the preflight
+
+Upload `infra/livekit.yaml`, `infra/turn-preflight.sh` and
+`deployment/nginx/stream-443.conf` to the same paths under `$APP`, then:
+
+```bash
+bash infra/turn-preflight.sh
+```
+
+Carry on only if: section 1 shows `with-stream`, `stream_ssl_module` and
+`stream_ssl_preread_module`; section 3 shows **no** `real_ip_header` and no
+`allow`/`deny` inside a vhost; section 4 shows the ports free; section 5 says ok.
+Otherwise stop and send the output. Section 2 is the list of vhost files §12.6
+will change — keep it.
+
+If section 1 lists the stream modules as `=dynamic`, load them first:
+
+```bash
+ls /usr/lib/nginx/modules/ | grep stream     # or /usr/share/nginx/modules
+sudo sed -i '1i load_module modules/ngx_stream_module.so;' /etc/nginx/nginx.conf
+```
+
+### 12.4 Firewall
+
+```bash
+sudo ufw allow 3478/udp           # TURN over UDP
+sudo ufw allow 30000:30200/udp    # TURN relay sockets
+sudo ufw status | grep -E '443|3478|30000'
+```
+
+Open the same two in the **cloud provider's security group**, from anywhere
+(0.0.0.0/0). 443/tcp is already open. Do not open 5349, 5350 or 10443 — they
+are localhost-only.
+
+### 12.5 LiveKit with TURN
+
+`docker-compose.yml` is git-ignored — edit the server copy. Under
+`services.livekit.ports`, after the `7892:7892/udp` line, add:
+
+```yaml
+      - "127.0.0.1:5349:5349"
+      - "3478:3478/udp"
+      - "30000-30200:30000-30200/udp"
+```
+
+```bash
+docker compose config --quiet && echo compose ok
+docker compose up -d --force-recreate livekit
+sleep 5
+docker compose logs livekit 2>&1 | grep -iE 'turn|error' | tail -5    # expect TURN started, no errors
+ss -ltn | grep 127.0.0.1:5349                                          # LiveKit TURN listening
+```
+
+Recreating LiveKit drops anyone currently in a LiveKit meeting for a few
+seconds; the client reconnects on its own.
+
+### 12.6 nginx: hand 443 to the stream router
+
+All vhosts move in one reload, so the sites never go dark.
+
+```bash
+# a. Stream router, not yet included
+sudo mkdir -p /etc/nginx/stream.d
+sudo cp deployment/nginx/stream-443.conf /etc/nginx/stream.d/turaquant-443.conf
+
+# b. Move every HTTPS vhost from 443 to 127.0.0.1:10443 (the files preflight §2 listed).
+#    The [::]:443 ssl line is dropped — the stream router listens on [::]:443 instead.
+for f in $(sudo grep -rlE 'listen\s+(\[::\]:)?443\s+ssl' /etc/nginx/sites-enabled/); do
+  echo "editing $f"
+  sudo sed -i --follow-symlinks -E \
+    -e '/listen\s+\[::\]:443\s+ssl[^;]*;/d' \
+    -e 's#listen\s+443\s+ssl([^;]*);#listen 127.0.0.1:10443 ssl proxy_protocol\1;\n    set_real_ip_from 127.0.0.1;\n    real_ip_header proxy_protocol;\n    port_in_redirect off;#' \
+    "$f"
+done
+sudo grep -rnE 'listen\s+(\[::\]:)?443(\s|;)' /etc/nginx/ | grep -v quic   # must print NOTHING
+
+# c. Include the router at the top level of nginx.conf (end of file = outside http{})
+grep -q 'stream.d' /etc/nginx/nginx.conf || \
+  echo 'include /etc/nginx/stream.d/*.conf;' | sudo tee -a /etc/nginx/nginx.conf
+
+# d. Test, then reload (a reload keeps the 443 socket open throughout)
+sudo nginx -t && sudo systemctl reload nginx
+sleep 2; sudo tail -5 /var/log/nginx/error.log
+sudo ss -ltnp | grep -E ':443\s|:10443|:5350'   # 443 (+[::]:443), 127.0.0.1:10443, 127.0.0.1:5350
+```
+
+If `nginx -t` fails, nothing has changed for visitors yet: run the rollback in
+§12.10 and send the error.
+
+### 12.7 Make CloudPanel agree (do not skip)
+
+CloudPanel keeps its own copy of each vhost and rewrites the file from it — on
+cert renewal, or when anyone presses Save. If its copy still says `listen 443
+ssl`, the next rewrite breaks nginx. For **every site** from preflight §2:
+CloudPanel → site → **Vhost**, replace
+
+```nginx
+    listen 443 ssl;
+    listen [::]:443 ssl;
+```
+
+with
+
+```nginx
+    listen 127.0.0.1:10443 ssl proxy_protocol;
+    set_real_ip_from 127.0.0.1;
+    real_ip_header proxy_protocol;
+    port_in_redirect off;
+```
+
+and Save (leave the `quic` lines alone). Then confirm nothing slipped back:
+
+```bash
+sudo grep -rnE 'listen\s+(\[::\]:)?443(\s|;)' /etc/nginx/ | grep -v quic   # must print NOTHING
+sudo nginx -t
+```
+
+### 12.8 Verify
+
+```bash
+# Sites still up — through Cloudflare and straight to origin
+PUB=$(curl -4 -s ifconfig.me)
+curl -sI https://turaquant.turacoz.com | head -1
+curl -sI --resolve turaquant.turacoz.com:443:$PUB https://turaquant.turacoz.com | head -1
+curl -s https://livekit.turaquant.turacoz.com; echo        # OK
+
+# TURN answers on 443 with its own certificate
+echo | openssl s_client -connect turn.turaquant.turacoz.com:443 \
+  -servername turn.turaquant.turacoz.com 2>/dev/null | openssl x509 -noout -subject -enddate
+
+# Real visitor IPs (not 127.0.0.1) in the access logs
+sudo tail -3 /home/*/logs/nginx/access.log 2>/dev/null || sudo tail -3 /var/log/nginx/access.log
+```
+
+In the browser, open a meeting with **`?relay=1`** on the URL (`&relay=1` if it
+already has a `?`). That forces media through TURN — the path external guests
+use — even from the office network. Video both ways = TURN works. To see it,
+open `chrome://webrtc-internals` during the call: the selected candidate pair is
+`relay`, and the connection's iceServers include
+`turns:turn.turaquant.turacoz.com:443?transport=tcp`.
+
+Finally, the real test: a client or KOL on their office network joins without
+any flag.
+
+### 12.9 Living with it
+
+- **New CloudPanel site:** it is created with `listen 443 ssl` and nginx will
+  then fail to reload. Immediately edit its Vhost as in §12.7.
+- **Certificate renewal** for `turn.` is automatic; the reload CloudPanel does
+  picks it up in the stream block. LiveKit needs no restart.
+- **`docker-compose.yml` is git-ignored:** if it is ever replaced, re-add the
+  three TURN port lines (§12.5).
+
+### 12.10 Rollback
+
+```bash
+sudo tar xzf /root/nginx-backup-*.tgz -C /      # restores /etc/nginx (pick the latest)
+sudo nginx -t && sudo systemctl reload nginx
+cp docker-compose.yml.bak-turn docker-compose.yml
+cp infra/livekit.yaml.bak-turn infra/livekit.yaml
+docker compose up -d --force-recreate livekit
+```
+
+If you had already saved vhosts in CloudPanel (§12.7), put the `listen 443 ssl`
+lines back there too.

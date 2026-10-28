@@ -147,3 +147,48 @@ On live, previews still had shapes in the wrong place (the swirl lines on the sp
 
 **Live server steps (Ubuntu):** upgrade LibreOffice from the official PPA, then restart the API:
 `sudo add-apt-repository -y ppa:libreoffice/ppa && sudo apt update && sudo apt install -y libreoffice-impress libreoffice-writer libreoffice-calc`
+
+## Transcription — "open() got an unexpected keyword argument 'metadata_errors'" (2026-10-15)
+
+faster-whisper 1.0.x calls `av.open(..., metadata_errors="ignore")`, and PyAV 14 removed that argument, so every local transcription failed on a fresh server install. faster-whisper 1.1+ no longer passes it. No code or schema change.
+
+| File | Change |
+|---|---|
+| `backend/requirements.txt` | `faster-whisper>=1.0.0` → `faster-whisper>=1.1.1`. |
+
+**Live server steps:** `cd /home/turaquant/app/backend && source venv/bin/activate && pip install -U "faster-whisper>=1.1.1"`, then restart the API.
+
+## Meeting document upload froze the whole API (Cloudflare "invalid or incomplete response") (2026-10-23)
+
+`POST /meetings/{id}/documents` was an `async def` but emails the board team synchronously over SMTP (`board_notify.notify_board` → one connection per recipient, 20s timeout each). Running on the event loop of the single uvicorn worker, that froze every request for every user (~90s on live, 05:32:37–05:34:05 UTC), and the browser surfaced Cloudflare's error. Made it a plain `def` so FastAPI runs it in a thread. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/api/endpoints/meeting_documents.py` | `upload_meeting_document`: `async def` → `def`; `await file.read()` → `file.file.read()`. |
+
+**Live server steps:** copy the file, then `sudo systemctl restart turasphere`.
+
+## Board notification emails sent in the background (2026-10-23)
+
+`board_notify.notify_board` (document added/shared, meeting start/end, minutes, engagements, stage changes) now resolves recipients in the request and sends from a daemon thread with its own DB session, so a slow or unreachable SMTP server never holds up the request. Results still land in `email_logs`. Direct one-off sends (KOL invite, test email, board emails) stay synchronous so the UI can show their outcome. No schema change.
+
+| File | Change |
+|---|---|
+| `backend/app/services/board_notify.py` | `notify_board` hands `send_email_bulk` to a background thread (`_send_in_background`); returns the number of recipients queued. |
+
+**Live server steps:** copy the file, then `sudo systemctl restart turasphere`.
+
+## Meetings — TURN relay on 443 so external clients / KOLs can join LiveKit meetings (2026-10-28)
+
+Internal users joined fine. Clients and KOLs on other organisations' networks got "could not establish connection". Their firewalls allow only 443 out, so signalling worked but media on UDP 7892 / TCP 7891 never connected. LiveKit's built-in TURN is now on, and nginx shares public 443 between the websites and TURN by reading the TLS hostname (SNI). No backend code or schema change: LiveKit sends the TURN details to browsers itself.
+
+**On the server:** follow `deployment/LIVEKIT_PRODUCTION.md` §12 in order (DNS `turn.turaquant.turacoz.com` grey cloud, CloudPanel cert, preflight, firewall 3478/udp + 30000-30200/udp, LiveKit recreate, nginx switch, CloudPanel vhost sync, verify). **Every HTTPS vhost on the box moves from `listen 443 ssl` to `listen 127.0.0.1:10443 ssl proxy_protocol`.** Any site CloudPanel creates later must be edited the same way, or nginx fails to reload.
+
+| File | Change |
+|---|---|
+| `infra/livekit.yaml` | New `turn:` block: `domain: turn.turaquant.turacoz.com`, `tls_port: 5349`, `external_tls: true` (nginx terminates TLS), `udp_port: 3478`, relay range 30000-30200. |
+| `docker-compose.yml` (git-ignored, edit the server copy by hand) | livekit ports: `127.0.0.1:5349:5349`, `3478:3478/udp`, `30000-30200:30000-30200/udp`. |
+| `deployment/nginx/stream-443.conf` | **New.** Goes to `/etc/nginx/stream.d/turaquant-443.conf`, included from the top level of `nginx.conf`. Public 443: SNI `turn.` → TLS termination → LiveKit 5349; everything else → `127.0.0.1:10443` with PROXY protocol. |
+| `deployment/nginx/turaquant.cloudpanel.conf` | `listen 443 ssl` / `[::]:443 ssl` replaced by `listen 127.0.0.1:10443 ssl proxy_protocol`, `set_real_ip_from 127.0.0.1`, `real_ip_header proxy_protocol`, `port_in_redirect off`. |
+| `infra/turn-preflight.sh` | **New.** Read-only server check: nginx stream modules, every 443 listener, clashing real_ip/allow/deny, free ports, DNS, certificate. |
+| `deployment/LIVEKIT_PRODUCTION.md` | New §12 (runbook + rollback). §9 troubleshooting rows and §11 open item updated. |

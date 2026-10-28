@@ -247,7 +247,10 @@ def list_meeting_documents(
 
 
 @router.post("/meetings/{meeting_id}/documents", status_code=201)
-async def upload_meeting_document(
+# Plain `def`, not `async def`: notify_board below sends SMTP synchronously (20s
+# timeout per recipient). In an async handler that ran on the event loop and froze
+# the whole single-worker API for ~90s on live; FastAPI runs a `def` in a thread.
+def upload_meeting_document(
     meeting_id: int,
     phase: str = Form(...),
     category: str = Form("other"),
@@ -291,7 +294,7 @@ async def upload_meeting_document(
 
     filename = f"{uuid.uuid4().hex}{ext}"
     abs_path = os.path.join(upload_dir, filename)
-    content = await file.read()
+    content = file.file.read()
     with open(abs_path, "wb") as f:
         f.write(content)
 
