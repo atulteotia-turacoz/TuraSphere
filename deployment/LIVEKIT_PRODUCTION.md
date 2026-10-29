@@ -13,7 +13,7 @@ wired.
 ## 1. Answer first: does LiveKit live on the same server?
 
 **Yes — same box, as the docker-compose stack already in the repo.** MySQL,
-FastAPI, nginx and LiveKit all run on `turaquant.turacoz.com`. Nothing about the
+FastAPI, nginx and LiveKit all run on `turasphere.com`. Nothing about the
 app assumes a separate machine.
 
 That holds because of what an SFU actually costs. LiveKit does not transcode; it
@@ -46,7 +46,7 @@ client — no rebuild, no redeploy of the static bundle.
 
 ```
                             ┌──────────────────────────────────────────┐
-  Browser (participant)     │        turaquant.turacoz.com             │
+  Browser (participant)     │        turasphere.com             │
         │                   │                                          │
         │  1. POST /api/meetings/7/livekit/token                       │
         ├──────────────────►│  nginx :443 ──► FastAPI :8000            │
@@ -65,8 +65,8 @@ client — no rebuild, no redeploy of the static bundle.
 
 | # | Path | Who → who | Address | Through nginx? |
 |---|---|---|---|---|
-| 1 | Token | Browser → FastAPI | `https://turaquant.turacoz.com/api/...` | yes |
-| 2 | Signalling | Browser → LiveKit | `wss://livekit.turaquant.turacoz.com` | yes (TLS terminates here) |
+| 1 | Token | Browser → FastAPI | `https://turasphere.com/api/...` | yes |
+| 2 | Signalling | Browser → LiveKit | `wss://livekit.turasphere.com` | yes (TLS terminates here) |
 | 3 | Server API | FastAPI → LiveKit | same URL, rewritten `wss://`→`https://` | yes |
 | 4 | Media | Browser ⇄ LiveKit | server public IP, **UDP 7892**, TCP 7891 fallback | **no** — direct |
 | 5 | Recording | Egress → LiveKit | `ws://livekit:7880` (internal docker network) | no — never leaves the box |
@@ -88,7 +88,7 @@ Two consequences worth internalising:
 ### Local development uses this same server (since 2026-08-10)
 
 There is no local LiveKit any more. `backend/.env` points at
-`wss://livekit.turaquant.turacoz.com` exactly like production, so the infra files in
+`wss://livekit.turasphere.com` exactly like production, so the infra files in
 this repo hold production values and need no per-environment switching.
 
 The local stack was removed because it advertised the laptop's LAN IP in its ICE
@@ -126,8 +126,8 @@ curl -fsSL https://get.docker.com | sh
 docker compose version          # v2 plugin must be present
 
 # DNS: a second A record pointing at the SAME server IP
-#   livekit.turaquant.turacoz.com   A   <SERVER_PUBLIC_IP>
-dig +short livekit.turaquant.turacoz.com
+#   livekit.turasphere.com   A   <SERVER_PUBLIC_IP>
+dig +short livekit.turasphere.com
 ```
 
 A subdomain is used rather than a path on the main host because LiveKit expects
@@ -274,16 +274,16 @@ Save as `/etc/nginx/sites-available/livekit.conf` and symlink into
 ```nginx
 server {
     listen 80;
-    server_name livekit.turaquant.turacoz.com;
+    server_name livekit.turasphere.com;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name livekit.turaquant.turacoz.com;
+    server_name livekit.turasphere.com;
 
-    ssl_certificate     /etc/letsencrypt/live/livekit.turaquant.turacoz.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/livekit.turaquant.turacoz.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/livekit.turasphere.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/livekit.turasphere.com/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
@@ -317,7 +317,7 @@ server {
 ```
 
 ```bash
-sudo certbot --nginx -d livekit.turaquant.turacoz.com --agree-tos \
+sudo certbot --nginx -d livekit.turasphere.com --agree-tos \
      --email admin@turacoz.com --non-interactive
 sudo nginx -t && sudo systemctl reload nginx
 ```
@@ -335,7 +335,7 @@ sudo ufw status
 and the provider firewall are two independent filters and both drop by default;
 UDP in particular is often not open even when TCP is.
 
-⚠️ **Cloudflare is in front of both hostnames** (`livekit.turaquant.turacoz.com`
+⚠️ **Cloudflare is in front of both hostnames** (`livekit.turasphere.com`
 resolves to `104.26.x.x`). Cloudflare proxies HTTP on 80/443 only — **WebRTC media
 cannot pass through it**. Browsers send media straight to the origin IP that LiveKit
 puts in its ICE candidates, bypassing Cloudflare entirely. Two consequences:
@@ -368,7 +368,7 @@ in the repo so the next `deploy.sh` carries it):
 # This value is handed to BROWSERS in the token response, so it must be the
 # public wss:// URL — not localhost, not the container name. The backend derives
 # its own REST base from it by swapping the scheme (livekit_service.http_url).
-LIVEKIT_URL=wss://livekit.turaquant.turacoz.com
+LIVEKIT_URL=wss://livekit.turasphere.com
 LIVEKIT_API_KEY=APIxxxxxxxxxxxx
 LIVEKIT_API_SECRET=<production secret>
 
@@ -409,13 +409,13 @@ one failing is meaningless if an earlier one did.
 
 ```bash
 # 1. LiveKit is alive behind nginx (path 2/3)
-curl -s https://livekit.turaquant.turacoz.com          # -> OK
+curl -s https://livekit.turasphere.com          # -> OK
 
 # 2. The WebSocket upgrade survives nginx — expect 101 Switching Protocols
 curl -i -N -o- -s \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-  https://livekit.turaquant.turacoz.com/rtc | head -1
+  https://livekit.turasphere.com/rtc | head -1
 
 # 3. LiveKit advertises the PUBLIC ip, not a private one (path 4)
 docker logs turaquant-livekit-1 2>&1 | grep "starting LiveKit server" | tail -1
@@ -490,7 +490,7 @@ How 443 is shared (nginx already owns it for every site on the box):
 
 ```
 client :443 ─► nginx stream (reads SNI, does not decrypt)
-                 ├─ turn.turaquant.turacoz.com ─► nginx TLS (CloudPanel cert) ─► 127.0.0.1:5349 LiveKit TURN
+                 ├─ turn.turasphere.com ─► nginx TLS (CloudPanel cert) ─► 127.0.0.1:5349 LiveKit TURN
                  └─ anything else ──────────────► 127.0.0.1:10443 the normal HTTPS vhosts
 ```
 
@@ -504,7 +504,9 @@ Run everything below **on the server**, in order, preferably outside meeting
 hours. Only §12.6 touches the websites, and with a reload it is seamless.
 
 ```bash
-APP=/home/turacoz-turaquant/htdocs/turaquant.turacoz.com   # where docker-compose.yml lives
+# The folder holding docker-compose.yml, read off the running LiveKit container
+APP=$(docker inspect "$(docker ps -qf name=livekit | head -1)" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
+echo "$APP"; ls "$APP/docker-compose.yml"
 cd $APP
 ```
 
@@ -526,19 +528,19 @@ Add `A  turn.turaquant  <that IP>`, proxy status **DNS only (grey cloud)**.
 Cloudflare cannot carry TURN; an orange cloud breaks it silently.
 
 ```bash
-dig +short turn.turaquant.turacoz.com   # must print the origin IP, not 104.x/172.6x
+dig +short turn.turasphere.com   # must print the origin IP, not 104.x/172.6x
 ```
 
 ### 12.2 Certificate (CloudPanel)
 
 CloudPanel → **Add Site → Create a Static HTML Site**, domain
-`turn.turaquant.turacoz.com`. Then that site → **SSL/TLS → Actions → New Let's
+`turn.turasphere.com`. Then that site → **SSL/TLS → Actions → New Let's
 Encrypt Certificate**. Renewal is CloudPanel's normal HTTP-01 on port 80, which
 this change does not touch.
 
 ```bash
 ls -l /etc/nginx/ssl-certificates/ | grep turn
-# expect turn.turaquant.turacoz.com.crt and .key — the paths stream-443.conf uses
+# expect turn.turasphere.com.crt and .key — the paths stream-443.conf uses
 ```
 
 ### 12.3 Copy the repo files up, run the preflight
@@ -663,13 +665,13 @@ sudo nginx -t
 ```bash
 # Sites still up — through Cloudflare and straight to origin
 PUB=$(curl -4 -s ifconfig.me)
-curl -sI https://turaquant.turacoz.com | head -1
-curl -sI --resolve turaquant.turacoz.com:443:$PUB https://turaquant.turacoz.com | head -1
-curl -s https://livekit.turaquant.turacoz.com; echo        # OK
+curl -sI https://turasphere.com | head -1
+curl -sI --resolve turasphere.com:443:$PUB https://turasphere.com | head -1
+curl -s https://livekit.turasphere.com; echo        # OK
 
 # TURN answers on 443 with its own certificate
-echo | openssl s_client -connect turn.turaquant.turacoz.com:443 \
-  -servername turn.turaquant.turacoz.com 2>/dev/null | openssl x509 -noout -subject -enddate
+echo | openssl s_client -connect turn.turasphere.com:443 \
+  -servername turn.turasphere.com 2>/dev/null | openssl x509 -noout -subject -enddate
 
 # Real visitor IPs (not 127.0.0.1) in the access logs
 sudo tail -3 /home/*/logs/nginx/access.log 2>/dev/null || sudo tail -3 /var/log/nginx/access.log
@@ -680,7 +682,7 @@ already has a `?`). That forces media through TURN — the path external guests
 use — even from the office network. Video both ways = TURN works. To see it,
 open `chrome://webrtc-internals` during the call: the selected candidate pair is
 `relay`, and the connection's iceServers include
-`turns:turn.turaquant.turacoz.com:443?transport=tcp`.
+`turns:turn.turasphere.com:443?transport=tcp`.
 
 Finally, the real test: a client or KOL on their office network joins without
 any flag.

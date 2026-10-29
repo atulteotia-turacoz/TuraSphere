@@ -43,14 +43,14 @@ rtc:
 # "could not establish pc connection". See deployment/LIVEKIT_PRODUCTION.md §12.
 #
 # TURN/TLS reaches the outside world on 443, shared with the websites:
-#   client --TLS:443--> nginx stream (SNI turn.turaquant.turacoz.com, terminates
+#   client --TLS:443--> nginx stream (SNI turn.turasphere.com, terminates
 #   TLS with CloudPanel's cert) --plain TCP--> 127.0.0.1:5349 --> here.
 # `external_tls: true` is what makes LiveKit listen on tls_port WITHOUT TLS and
 # advertise `turns:<domain>:443` to browsers. Because nginx owns the cert, a
 # CloudPanel renewal is picked up by the nginx reload — no LiveKit restart.
 turn:
   enabled: true
-  domain: turn.turaquant.turacoz.com
+  domain: turn.turasphere.com
   tls_port: 5349
   external_tls: true
   # TURN over UDP, for networks that block high ports but allow 3478. Cheaper

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LiveKit diagnostics — run ON THE SERVER, paste the output.
 #
-#   cd /home/turacoz-turaquant/htdocs/turaquant.turacoz.com
+#   cd <folder with docker-compose.yml>
 #   bash infra/livekit-diag.sh
 #
 # Read-only: it inspects and prints, it never edits or restarts anything.

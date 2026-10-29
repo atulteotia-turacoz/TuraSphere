@@ -182,13 +182,29 @@ faster-whisper 1.0.x calls `av.open(..., metadata_errors="ignore")`, and PyAV 14
 
 Internal users joined fine. Clients and KOLs on other organisations' networks got "could not establish connection". Their firewalls allow only 443 out, so signalling worked but media on UDP 7892 / TCP 7891 never connected. LiveKit's built-in TURN is now on, and nginx shares public 443 between the websites and TURN by reading the TLS hostname (SNI). No backend code or schema change: LiveKit sends the TURN details to browsers itself.
 
-**On the server:** follow `deployment/LIVEKIT_PRODUCTION.md` §12 in order (DNS `turn.turaquant.turacoz.com` grey cloud, CloudPanel cert, preflight, firewall 3478/udp + 30000-30200/udp, LiveKit recreate, nginx switch, CloudPanel vhost sync, verify). **Every HTTPS vhost on the box moves from `listen 443 ssl` to `listen 127.0.0.1:10443 ssl proxy_protocol`.** Any site CloudPanel creates later must be edited the same way, or nginx fails to reload.
+**On the server:** follow `deployment/LIVEKIT_PRODUCTION.md` §12 in order (DNS `turn.turasphere.com` grey cloud, CloudPanel cert, preflight, firewall 3478/udp + 30000-30200/udp, LiveKit recreate, nginx switch, CloudPanel vhost sync, verify). **Every HTTPS vhost on the box moves from `listen 443 ssl` to `listen 127.0.0.1:10443 ssl proxy_protocol`.** Any site CloudPanel creates later must be edited the same way, or nginx fails to reload.
 
 | File | Change |
 |---|---|
-| `infra/livekit.yaml` | New `turn:` block: `domain: turn.turaquant.turacoz.com`, `tls_port: 5349`, `external_tls: true` (nginx terminates TLS), `udp_port: 3478`, relay range 30000-30200. |
+| `infra/livekit.yaml` | New `turn:` block: `domain: turn.turasphere.com`, `tls_port: 5349`, `external_tls: true` (nginx terminates TLS), `udp_port: 3478`, relay range 30000-30200. |
 | `docker-compose.yml` (git-ignored, edit the server copy by hand) | livekit ports: `127.0.0.1:5349:5349`, `3478:3478/udp`, `30000-30200:30000-30200/udp`. |
 | `deployment/nginx/stream-443.conf` | **New.** Goes to `/etc/nginx/stream.d/turaquant-443.conf`, included from the top level of `nginx.conf`. Public 443: SNI `turn.` → TLS termination → LiveKit 5349; everything else → `127.0.0.1:10443` with PROXY protocol. |
 | `deployment/nginx/turaquant.cloudpanel.conf` | `listen 443 ssl` / `[::]:443 ssl` replaced by `listen 127.0.0.1:10443 ssl proxy_protocol`, `set_real_ip_from 127.0.0.1`, `real_ip_header proxy_protocol`, `port_in_redirect off`. |
 | `infra/turn-preflight.sh` | **New.** Read-only server check: nginx stream modules, every 443 listener, clashing real_ip/allow/deny, free ports, DNS, certificate. |
 | `deployment/LIVEKIT_PRODUCTION.md` | New §12 (runbook + rollback). §9 troubleshooting rows and §11 open item updated. |
+
+## Meetings — LiveKit / TURN hostnames moved to turasphere.com (2026-10-29)
+
+The live app is `turasphere.com`, with LiveKit at `wss://livekit.turasphere.com` (server v1.13.9, TURN `turn.turasphere.com` on 443 + UDP 3478). The old `livekit.turaquant.turacoz.com` runs v1.10.1 **without TURN**, so a backend pointing there gives browsers no relay: external clients / KOLs, and any `?relay=1` test, fail with "could not establish pc connection". No code or schema change.
+
+**On the server:** `LIVEKIT_URL=wss://livekit.turasphere.com` in the backend `.env`, then restart the backend. If Account → Meeting Platforms → LiveKit has a URL saved, it overrides `.env`: clear it or set the same URL.
+
+| File | Change |
+|---|---|
+| `backend/.env`, `backend/.env.production` | `LIVEKIT_URL=wss://livekit.turasphere.com`. |
+| `infra/livekit.yaml` | `turn.domain: turn.turasphere.com`. |
+| `deployment/nginx/stream-443.conf` | SNI map and certificate paths use `turn.turasphere.com`. |
+| `deployment/nginx/turaquant.cloudpanel.conf` | `server_name turasphere.com`; LiveKit vhost reference `livekit.turasphere.com`. |
+| `docker-compose.yml` (git-ignored, edit the server copy by hand) | `livekit/livekit-server:v1.13.9`, matching the live server. |
+| `infra/turn-preflight.sh`, `infra/livekit-diag.sh` | TURN host `turn.turasphere.com`; run-from path is now "the folder with docker-compose.yml" instead of the old turacoz path. |
+| `deployment/LIVEKIT_PRODUCTION.md` | All app / LiveKit / TURN hostnames use `turasphere.com`. §12 finds the compose folder from the running LiveKit container instead of a hard-coded path. |

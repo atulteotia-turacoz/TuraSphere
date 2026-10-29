@@ -2,14 +2,14 @@
 # TURN-on-443 preflight — run ON THE SERVER before §12 of
 # deployment/LIVEKIT_PRODUCTION.md, and paste the output if anything says STOP.
 #
-#   cd /home/turacoz-turaquant/htdocs/turaquant.turacoz.com
+#   cd <folder with docker-compose.yml>
 #   bash infra/turn-preflight.sh
 #
 # Read-only: it inspects and prints, it never edits or restarts anything.
 
 set -uo pipefail
 hr() { printf '\n──────── %s ────────\n' "$1"; }
-TURN_HOST=turn.turaquant.turacoz.com
+TURN_HOST=turn.turasphere.com
 
 hr "1. nginx has the stream + ssl_preread modules"
 V=$(nginx -V 2>&1)
