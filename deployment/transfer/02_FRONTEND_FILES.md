@@ -72,3 +72,13 @@ Goes with the TURN-on-443 server change (see `01_BACKEND_FILES.md`, same date). 
 | File | Change |
 |---|---|
 | `frontend/src/pages/advisoryBoards/LiveKitRoom.js` | `room.connect` passes `rtcConfig: { iceTransportPolicy: 'relay' }` when the page URL has `relay=1`. |
+
+## Meetings — every LiveKit participant uses the TURN relay by default (2026-10-29)
+
+Clients and KOLs from other organisations could not join ("could not establish pc connection"): their firewalls drop our direct media ports. Tested with `?relay=1` and it worked, so relay is now the default for **everyone**: internal users, KOLs on the join page and clients in the portal. All media goes through `turns:turn.turasphere.com:443`. `?relay=0` on the page URL tries direct media instead, for debugging. Recordings are unaffected: egress uses its own template page, not this component.
+
+Needs the server fix from `01_BACKEND_FILES.md` (2026-10-29): the backend must hand out `wss://livekit.turasphere.com`. The old `livekit.turaquant.turacoz.com` has no TURN, so with relay forced nobody could join.
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/advisoryBoards/LiveKitRoom.js` | `room.connect` always passes `rtcConfig: { iceTransportPolicy: 'relay' }` unless the page URL has `relay=0`. |

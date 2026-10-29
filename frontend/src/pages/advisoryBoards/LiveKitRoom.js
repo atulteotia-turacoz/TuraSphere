@@ -99,10 +99,11 @@ export default function LiveKitRoom({ fetchToken, sessionKey, onLeave, onRecordT
       try {
         const { data } = await fetchToken();
         if (cancelled) return;
-        // `?relay=1` on the page URL forces media through the TURN relay — the
-        // path corporate-network guests depend on — so it can be tested from a
-        // network that would otherwise connect directly.
-        const forceRelay = new URLSearchParams(window.location.search).get('relay') === '1';
+        // Media goes through the TURN relay (443) only, for everyone. External
+        // clients / KOLs sit behind corporate firewalls that drop our direct
+        // UDP/TCP media ports, and one path for all participants is simpler to
+        // support. `?relay=0` on the page URL tries direct media, for debugging.
+        const forceRelay = new URLSearchParams(window.location.search).get('relay') !== '0';
         await room.connect(data.url, data.token,
           forceRelay ? { rtcConfig: { iceTransportPolicy: 'relay' } } : undefined);
         if (cancelled) return;
