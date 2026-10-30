@@ -16,6 +16,7 @@ from app.models.survey import (
     Survey, SurveyQuestion, SurveyResponse, SurveyAnswer,
     SurveyStatus, QuestionType,
 )
+from app.services.survey_nps import nps_summary
 
 router = APIRouter(tags=["Surveys"])
 
@@ -248,6 +249,19 @@ def _result_column_order(survey, q_map):
     return cols
 
 
+def _nps_results(survey: Survey, q_map):
+    """One summary per NPS question, in survey order, from completed responses only
+    (a partial's score could still change). Labelled with the results-table column
+    key so a summary can be matched to its column."""
+    completed = [r for r in survey.responses if r.status == "complete"]
+    out = []
+    for q in survey.questions:
+        if q.question_type == QuestionType.nps:
+            answers = [a.answer_text for r in completed for a in r.answers if a.question_id == q.id]
+            out.append({"question_id": q.id, "label": q_map[q.id], **nps_summary(answers)})
+    return out
+
+
 def _responses_to_list(survey: Survey):
     # Use a stable, unique display key per question so (a) empty-label questions
     # (e.g. matrix grids the owner forgot to title) still get a column instead of
@@ -475,6 +489,7 @@ def get_survey_results(
         "title": survey.title,
         "total_responses": len(completed),
         "columns": columns,
+        "nps": _nps_results(survey, q_map),
         "responses": _responses_to_list(survey),
     }
 

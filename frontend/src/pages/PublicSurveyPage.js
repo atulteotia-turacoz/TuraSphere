@@ -155,7 +155,8 @@ const UI_STRINGS = {
     page: 'Page', of: 'of', unavailable: 'Survey Unavailable',
     alreadyTitle: 'You have already filled this survey',
     alreadyMsg: 'Our records show a response with this information has already been submitted. Thank you!',
-    welcomeBack: 'Welcome back — we picked up where you left off.' },
+    welcomeBack: 'Welcome back — we picked up where you left off.',
+    npsLow: 'Not at all likely', npsHigh: 'Extremely likely' },
   es: { start: 'Comenzar encuesta', checking: 'Comprobando…', next: 'Siguiente', back: 'Atrás', submit: 'Enviar',
     submitting: 'Enviando…', submitResponse: 'Enviar respuesta', loading: 'Cargando encuesta…',
     beforeBegin: 'Antes de empezar…', clickStart: 'Haz clic en "Comenzar" para iniciar la encuesta.',
@@ -163,7 +164,8 @@ const UI_STRINGS = {
     page: 'Página', of: 'de', unavailable: 'Encuesta no disponible',
     alreadyTitle: 'Ya has completado esta encuesta',
     alreadyMsg: 'Nuestros registros muestran que ya se ha enviado una respuesta con esta información. ¡Gracias!',
-    welcomeBack: 'Bienvenido de nuevo: continuamos donde lo dejaste.' },
+    welcomeBack: 'Bienvenido de nuevo: continuamos donde lo dejaste.',
+    npsLow: 'Nada probable', npsHigh: 'Muy probable' },
   fr: { start: 'Commencer l\'enquête', checking: 'Vérification…', next: 'Suivant', back: 'Retour', submit: 'Envoyer',
     submitting: 'Envoi…', submitResponse: 'Envoyer la réponse', loading: 'Chargement de l\'enquête…',
     beforeBegin: 'Avant de commencer…', clickStart: 'Cliquez sur « Commencer » pour démarrer l\'enquête.',
@@ -171,7 +173,8 @@ const UI_STRINGS = {
     page: 'Page', of: 'sur', unavailable: 'Enquête indisponible',
     alreadyTitle: 'Vous avez déjà répondu à cette enquête',
     alreadyMsg: 'Nos archives indiquent qu\'une réponse avec ces informations a déjà été envoyée. Merci !',
-    welcomeBack: 'Bon retour — nous avons repris là où vous vous étiez arrêté.' },
+    welcomeBack: 'Bon retour — nous avons repris là où vous vous étiez arrêté.',
+    npsLow: 'Pas du tout probable', npsHigh: 'Très probable' },
   de: { start: 'Umfrage starten', checking: 'Wird geprüft…', next: 'Weiter', back: 'Zurück', submit: 'Absenden',
     submitting: 'Wird gesendet…', submitResponse: 'Antwort absenden', loading: 'Umfrage wird geladen…',
     beforeBegin: 'Bevor wir beginnen…', clickStart: 'Klicken Sie auf „Starten", um die Umfrage zu beginnen.',
@@ -179,7 +182,8 @@ const UI_STRINGS = {
     page: 'Seite', of: 'von', unavailable: 'Umfrage nicht verfügbar',
     alreadyTitle: 'Sie haben diese Umfrage bereits ausgefüllt',
     alreadyMsg: 'Unsere Aufzeichnungen zeigen, dass bereits eine Antwort mit diesen Informationen übermittelt wurde. Vielen Dank!',
-    welcomeBack: 'Willkommen zurück — wir machen dort weiter, wo Sie aufgehört haben.' },
+    welcomeBack: 'Willkommen zurück — wir machen dort weiter, wo Sie aufgehört haben.',
+    npsLow: 'Überhaupt nicht wahrscheinlich', npsHigh: 'Äußerst wahrscheinlich' },
 };
 
 function RatingInput({ value, onChange }) {
@@ -220,6 +224,35 @@ function LinearScaleInput({ value, onChange }) {
   );
 }
 
+// Net Promoter Score: 0–10 on one row at every width, because the anchors under it
+// only mean anything if 0 and 10 sit at opposite ends. Deliberately one neutral colour:
+// red/green buttons would steer the answer. "0" is a real score, so test for
+// "no answer" rather than falsiness.
+function NpsInput({ value, onChange, lowLabel, highLabel }) {
+  const selected = value == null || value === '' ? null : parseInt(value, 10);
+  return (
+    <div style={{ maxWidth: 520, marginTop: 4 }}>
+      <div className="keep-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(11, minmax(0, 1fr))', gap: 4 }}>
+        {Array.from({ length: 11 }, (_, n) => (
+          <button key={n} type="button" onClick={() => onChange(String(n))} aria-pressed={selected === n}
+            style={{
+              height: 42, padding: 0, borderRadius: 8, border: '2px solid',
+              borderColor: selected === n ? 'var(--color-primary)' : 'var(--color-border)',
+              background: selected === n ? 'var(--color-primary)' : 'var(--color-surface)',
+              color: selected === n ? 'var(--color-text-inverse)' : 'var(--color-text)',
+              fontWeight: 600, fontSize: '0.92rem', cursor: 'pointer',
+            }}>
+            {n}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 8, fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+        <span>{lowLabel}</span><span style={{ textAlign: 'right' }}>{highLabel}</span>
+      </div>
+    </div>
+  );
+}
+
 // Full-screen image viewer. Closes on backdrop click, the × button, or Escape.
 function ImageLightbox({ src, onClose }) {
   useEffect(() => {
@@ -254,7 +287,7 @@ function ZoomThumb({ src, onZoom, style }) {
   );
 }
 
-function QuestionRenderer({ q, idx, answer, setAnswer, showNumber, showAsterisk = true }) {
+function QuestionRenderer({ q, idx, answer, setAnswer, showNumber, showAsterisk = true, t = UI_STRINGS.en }) {
   const imgSrc = resolveImg(q.image);
   const [zoom, setZoom] = useState(null);
 
@@ -428,6 +461,10 @@ function QuestionRenderer({ q, idx, answer, setAnswer, showNumber, showAsterisk 
 
       {q.question_type === 'linear_scale' && (
         <LinearScaleInput value={answer} onChange={setAnswer} />
+      )}
+
+      {q.question_type === 'nps' && (
+        <NpsInput value={answer} onChange={setAnswer} lowLabel={t.npsLow} highLabel={t.npsHigh} />
       )}
 
       {q.question_type === 'matrix' && (() => {
@@ -1014,6 +1051,7 @@ export default function PublicSurveyPage() {
                       setAnswer={(val) => setAnswer(q.id, val)}
                       showNumber={showQNumbers}
                       showAsterisk={showAsterisks}
+                      t={t}
                     />
                   </div>
                 );
@@ -1116,7 +1154,7 @@ export default function PublicSurveyPage() {
             qNum++;
             return (
               <div key={q.id} className="card" style={{ marginBottom: 12, padding: '20px 28px' }}>
-                <QuestionRenderer q={q} idx={qNum - 1} answer={answers[q.id]} setAnswer={(val) => setAnswer(q.id, val)} showNumber={showQNumbers} showAsterisk={showAsterisks} />
+                <QuestionRenderer q={q} idx={qNum - 1} answer={answers[q.id]} setAnswer={(val) => setAnswer(q.id, val)} showNumber={showQNumbers} showAsterisk={showAsterisks} t={t} />
               </div>
             );
           }); })()}

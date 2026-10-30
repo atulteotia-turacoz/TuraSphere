@@ -1,15 +1,73 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Trash2, CheckCircle, XCircle,
   AlertCircle, Loader, FileText, ToggleRight, ToggleLeft, BarChart3,
-  Clock, Users, Link2, Eye, Edit3, Save,
+  Clock, Users, Link2, Eye, Edit3, Save, ImagePlus, X,
 } from 'lucide-react';
 import {
-  listPolls, createPoll, deletePoll, updatePoll, getPollResults, deletePollVote,
+  listPolls, createPoll, deletePoll, updatePoll, getPollResults, deletePollVote, uploadSurveyImage,
 } from '../services/api';
 import {
   useEngagementStats, StatusMix, EngagementCards, GapChips, FilterBar, downloadCsv,
 } from '../components/common/EngagementInsights';
+
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const BACKEND_URL = API_BASE.replace('/api/v1', '');
+const resolveImg = (url) => (!url ? null : url.startsWith('http') ? url : `${BACKEND_URL}${url}`);
+
+const blankOption = () => ({ text: '', image: '' });
+const normalizeOption = (o) => (typeof o === 'string' ? { text: o, image: '' } : { text: o?.text || '', image: o?.image || '' });
+const optionHasContent = (o) => Boolean(o.text.trim() || o.image);
+// An image-only option gets a label here, once, so results, the vote table and the
+// CSV never have to deal with a blank option.
+const serializeOptions = (options) => options.filter(optionHasContent).map((o, i) => {
+  const out = { text: o.text.trim() || `Option ${String.fromCharCode(65 + i)}` };
+  if (o.image) out.image = o.image;
+  return out;
+});
+
+/* ── Upload / preview / remove the image on one answer option ── */
+function OptionImageButton({ image, onChange, onError }) {
+  const fileRef = useRef();
+  const [uploading, setUploading] = useState(false);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const res = await uploadSurveyImage(file);
+      onChange(res.data.url);
+    } catch (err) {
+      onError(err.response?.data?.detail || 'Image upload failed');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  if (image) {
+    return (
+      <div style={{ position: 'relative', flexShrink: 0, width: 36, height: 36 }}>
+        <img src={resolveImg(image)} alt="" style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 4, border: '1px solid var(--color-border)' }} />
+        <button type="button" onClick={() => onChange('')} title="Remove image" aria-label="Remove image"
+          style={{ position: 'absolute', top: -6, right: -6, width: 16, height: 16, padding: 0, border: 'none', borderRadius: '50%', cursor: 'pointer',
+            background: 'var(--color-error)', color: 'var(--color-text-inverse)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <X size={10} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <>
+      <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+      <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} title="Add image" aria-label="Add image"
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', padding: 4, flexShrink: 0, display: 'flex' }}>
+        {uploading ? <Loader size={15} className="spinning" /> : <ImagePlus size={15} />}
+      </button>
+    </>
+  );
+}
 
 function StatusBadge({ status }) {
   const config = {
@@ -30,7 +88,7 @@ export default function PollingPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newQuestions, setNewQuestions] = useState([
-    { title: '', options: ['', ''], allow_multiple: false },
+    { title: '', options: [blankOption(), blankOption()], allow_multiple: false },
   ]);
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
@@ -52,13 +110,13 @@ export default function PollingPage() {
   useEffect(() => { fetchPolls(); }, [fetchPolls]);
 
   // ── Question helpers for create form ──
-  const addNewQuestion = (type = 'choice') => setNewQuestions(prev => [...prev, { title: '', type, options: type === 'choice' ? ['', ''] : [], allow_multiple: false }]);
+  const addNewQuestion = (type = 'choice') => setNewQuestions(prev => [...prev, { title: '', type, options: type === 'choice' ? [blankOption(), blankOption()] : [], allow_multiple: false }]);
   const removeNewQuestion = (qi) => setNewQuestions(prev => prev.filter((_, i) => i !== qi));
   const updateNewQuestion = (qi, field, val) => setNewQuestions(prev => prev.map((q, i) => i === qi ? { ...q, [field]: val } : q));
-  const addNewOption = (qi) => setNewQuestions(prev => prev.map((q, i) => i === qi ? { ...q, options: [...q.options, ''] } : q));
-  const updateNewOption = (qi, oi, val) => setNewQuestions(prev => prev.map((q, i) => {
+  const addNewOption = (qi) => setNewQuestions(prev => prev.map((q, i) => i === qi ? { ...q, options: [...q.options, blankOption()] } : q));
+  const updateNewOption = (qi, oi, patch) => setNewQuestions(prev => prev.map((q, i) => {
     if (i !== qi) return q;
-    const opts = [...q.options]; opts[oi] = val; return { ...q, options: opts };
+    const opts = [...q.options]; opts[oi] = { ...opts[oi], ...patch }; return { ...q, options: opts };
   }));
   const removeNewOption = (qi, oi) => setNewQuestions(prev => prev.map((q, i) => i !== qi ? q : { ...q, options: q.options.filter((_, j) => j !== oi) }));
 
@@ -68,7 +126,7 @@ export default function PollingPage() {
       const q = newQuestions[i];
       if (!q.title.trim()) { setError(`Question ${i + 1} title is required`); return; }
       if (q.type !== 'text') {
-        const validOpts = q.options.filter(o => o.trim());
+        const validOpts = q.options.filter(optionHasContent);
         if (validOpts.length < 2) { setError(`Question ${i + 1} needs at least 2 options`); return; }
       }
     }
@@ -79,11 +137,11 @@ export default function PollingPage() {
         questions: newQuestions.map(q => ({
           title: q.title.trim(),
           type: q.type || 'choice',
-          options: q.type === 'text' ? [] : q.options.filter(o => o.trim()).map(o => ({ text: o.trim() })),
+          options: q.type === 'text' ? [] : serializeOptions(q.options),
           allow_multiple: q.type === 'text' ? false : q.allow_multiple,
         })),
       });
-      setShowCreate(false); setNewTitle(''); setNewQuestions([{ title: '', type: 'choice', options: ['', ''], allow_multiple: false }]);
+      setShowCreate(false); setNewTitle(''); setNewQuestions([{ title: '', type: 'choice', options: [blankOption(), blankOption()], allow_multiple: false }]);
       await fetchPolls();
     } catch { setError('Failed to create poll'); }
     finally { setCreating(false); }
@@ -119,19 +177,19 @@ export default function PollingPage() {
     setEditQuestions((p.questions || []).map(q => ({
       title: q.title || '',
       type: q.type || 'choice',
-      options: (q.options || []).map(o => typeof o === 'string' ? o : o.text || ''),
+      options: (q.options || []).map(normalizeOption),
       allow_multiple: q.allow_multiple || false,
     })));
     setExpandedPoll(null); setPollResults(null);
   };
   const cancelEdit = () => { setEditingPoll(null); setEditTitle(''); setEditQuestions([]); };
-  const addEditQuestion = (type = 'choice') => setEditQuestions(prev => [...prev, { title: '', type, options: type === 'choice' ? ['', ''] : [], allow_multiple: false }]);
+  const addEditQuestion = (type = 'choice') => setEditQuestions(prev => [...prev, { title: '', type, options: type === 'choice' ? [blankOption(), blankOption()] : [], allow_multiple: false }]);
   const removeEditQuestion = (qi) => setEditQuestions(prev => prev.filter((_, i) => i !== qi));
   const updateEditQuestion = (qi, field, val) => setEditQuestions(prev => prev.map((q, i) => i === qi ? { ...q, [field]: val } : q));
-  const addEditOption = (qi) => setEditQuestions(prev => prev.map((q, i) => i === qi ? { ...q, options: [...q.options, ''] } : q));
-  const updateEditOption = (qi, oi, val) => setEditQuestions(prev => prev.map((q, i) => {
+  const addEditOption = (qi) => setEditQuestions(prev => prev.map((q, i) => i === qi ? { ...q, options: [...q.options, blankOption()] } : q));
+  const updateEditOption = (qi, oi, patch) => setEditQuestions(prev => prev.map((q, i) => {
     if (i !== qi) return q;
-    const opts = [...q.options]; opts[oi] = val; return { ...q, options: opts };
+    const opts = [...q.options]; opts[oi] = { ...opts[oi], ...patch }; return { ...q, options: opts };
   }));
   const removeEditOption = (qi, oi) => setEditQuestions(prev => prev.map((q, i) => i !== qi ? q : { ...q, options: q.options.filter((_, j) => j !== oi) }));
 
@@ -140,7 +198,7 @@ export default function PollingPage() {
     for (let i = 0; i < editQuestions.length; i++) {
       const q = editQuestions[i];
       if (!q.title.trim()) { setError(`Question ${i + 1} title is required`); return; }
-      if (q.type !== 'text' && q.options.filter(o => o.trim()).length < 2) { setError(`Question ${i + 1} needs at least 2 options`); return; }
+      if (q.type !== 'text' && q.options.filter(optionHasContent).length < 2) { setError(`Question ${i + 1} needs at least 2 options`); return; }
     }
     setSavingEdit(true);
     try {
@@ -149,7 +207,7 @@ export default function PollingPage() {
         questions: editQuestions.map(q => ({
           title: q.title.trim(),
           type: q.type || 'choice',
-          options: q.type === 'text' ? [] : q.options.filter(o => o.trim()).map(o => ({ text: o.trim() })),
+          options: q.type === 'text' ? [] : serializeOptions(q.options),
           allow_multiple: q.type === 'text' ? false : q.allow_multiple,
         })),
       });
@@ -256,7 +314,7 @@ export default function PollingPage() {
                     <select value={q.type || 'choice'} onChange={e => {
                       updateNewQuestion(qi, 'type', e.target.value);
                       if (e.target.value === 'text') updateNewQuestion(qi, 'options', []);
-                      else if (q.options.length < 2) updateNewQuestion(qi, 'options', ['', '']);
+                      else if (q.options.length < 2) updateNewQuestion(qi, 'options', [blankOption(), blankOption()]);
                     }} style={{ fontSize: '0.78rem', padding: '2px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', cursor: 'pointer' }}>
                       <option value="choice">Choice</option>
                       <option value="text">Text Field</option>
@@ -277,8 +335,9 @@ export default function PollingPage() {
                     {q.options.map((opt, oi) => (
                       <div key={oi} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
                         <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)', minWidth: 16, textAlign: 'center' }}>{String.fromCharCode(65 + oi)}</span>
-                        <input className="form-control" placeholder={`Option ${oi + 1}`} value={opt}
-                          onChange={e => updateNewOption(qi, oi, e.target.value)} style={{ flex: 1 }} />
+                        <input className="form-control" placeholder={`Option ${oi + 1}`} value={opt.text}
+                          onChange={e => updateNewOption(qi, oi, { text: e.target.value })} style={{ flex: 1 }} />
+                        <OptionImageButton image={opt.image} onError={setError} onChange={image => updateNewOption(qi, oi, { image })} />
                         {q.options.length > 2 && (
                           <button onClick={() => removeNewOption(qi, oi)} type="button"
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-error)' }}><Trash2 size={13} /></button>
@@ -317,7 +376,7 @@ export default function PollingPage() {
               <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>
                 {creating ? <Loader size={14} className="spinning" /> : <><Plus size={14} /> Create Poll</>}
               </button>
-              <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setNewTitle(''); setNewQuestions([{ title: '', type: 'choice', options: ['', ''], allow_multiple: false }]); }}>Cancel</button>
+              <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setNewTitle(''); setNewQuestions([{ title: '', type: 'choice', options: [blankOption(), blankOption()], allow_multiple: false }]); }}>Cancel</button>
             </div>
           </div>
         </div>
@@ -419,7 +478,7 @@ export default function PollingPage() {
                             <select value={q.type || 'choice'} onChange={e => {
                               updateEditQuestion(qi, 'type', e.target.value);
                               if (e.target.value === 'text') updateEditQuestion(qi, 'options', []);
-                              else if (q.options.length < 2) updateEditQuestion(qi, 'options', ['', '']);
+                              else if (q.options.length < 2) updateEditQuestion(qi, 'options', [blankOption(), blankOption()]);
                             }} style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--color-border)', cursor: 'pointer' }}>
                               <option value="choice">Choice</option>
                               <option value="text">Text</option>
@@ -438,8 +497,9 @@ export default function PollingPage() {
                             {q.options.map((opt, oi) => (
                               <div key={oi} style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
                                 <span style={{ fontSize: '0.72rem', color: 'var(--color-text-light)', minWidth: 14 }}>{String.fromCharCode(65 + oi)}</span>
-                                <input className="form-control" style={{ flex: 1, fontSize: '0.85rem' }} placeholder={`Option ${oi + 1}`} value={opt}
-                                  onChange={e => updateEditOption(qi, oi, e.target.value)} />
+                                <input className="form-control" style={{ flex: 1, fontSize: '0.85rem' }} placeholder={`Option ${oi + 1}`} value={opt.text}
+                                  onChange={e => updateEditOption(qi, oi, { text: e.target.value })} />
+                                <OptionImageButton image={opt.image} onError={setError} onChange={image => updateEditOption(qi, oi, { image })} />
                                 {q.options.length > 2 && (
                                   <button onClick={() => removeEditOption(qi, oi)} type="button"
                                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-error)' }}><Trash2 size={12} /></button>
@@ -482,7 +542,7 @@ export default function PollingPage() {
                         {/* Per-question bar charts */}
                         {(pollResults.questions || []).map((q, qi) => {
                           const isText = q.type === 'text';
-                          const opts = (q.options || []).map(o => typeof o === 'string' ? o : o.text);
+                          const opts = (q.options || []).map(normalizeOption);
                           const qTallies = (pollResults.tallies || {})[qi] || (pollResults.tallies || {})[String(qi)] || {};
                           return (
                             <div key={qi} style={{ marginBottom: 20, padding: '12px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-light)' }}>
@@ -513,7 +573,10 @@ export default function PollingPage() {
                                   return (
                                     <div key={oi} style={{ marginBottom: 6 }}>
                                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                                        <span style={{ fontSize: '0.84rem' }}>{o}</span>
+                                        <span style={{ fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                          {o.image && <img src={resolveImg(o.image)} alt="" style={{ width: 72, height: 40, padding: 2, objectFit: 'contain', borderRadius: 4, flexShrink: 0, background: 'var(--color-surface)', border: '1px solid var(--color-border-light)', boxSizing: 'border-box' }} />}
+                                          {o.text}
+                                        </span>
                                         <span style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>{votes} ({pct}%)</span>
                                       </div>
                                       <div style={{ height: 6, background: 'var(--color-border-light)', borderRadius: 3, overflow: 'hidden' }}>

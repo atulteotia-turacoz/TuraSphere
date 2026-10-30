@@ -597,7 +597,7 @@ CALL tq_add_column('poll_votes', 'created_at', 'DATETIME NULL');
 -- survey_questions
 CALL tq_add_column('survey_questions', 'survey_id', 'INTEGER NULL');
 CALL tq_add_column('survey_questions', 'label', 'TEXT NULL');
-CALL tq_add_column('survey_questions', 'question_type', 'ENUM(''text'',''textarea'',''number'',''select'',''multi_select'',''radio'',''checkbox'',''rating'',''date'',''email'',''phone'',''url'',''time'',''yes_no'',''linear_scale'',''file_upload'',''section_header'',''page_break'',''matrix'') NULL');
+CALL tq_add_column('survey_questions', 'question_type', 'ENUM(''text'',''textarea'',''number'',''select'',''multi_select'',''radio'',''checkbox'',''rating'',''date'',''email'',''phone'',''url'',''time'',''yes_no'',''linear_scale'',''file_upload'',''section_header'',''page_break'',''matrix'',''nps'') NULL');
 CALL tq_add_column('survey_questions', 'options', 'TEXT NULL');
 CALL tq_add_column('survey_questions', 'image', 'VARCHAR(500) NULL');
 CALL tq_add_column('survey_questions', 'is_required', 'BOOL NOT NULL DEFAULT 0');

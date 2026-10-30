@@ -176,7 +176,7 @@ export default function PublicPollPage() {
                         }}>
                           {isSelected && <CheckCircle size={12} style={{ color: 'var(--color-text-inverse)' }} />}
                         </div>
-                        {optImg && <img src={optImg} alt="" style={{ height: 36, width: 36, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />}
+                        {optImg && <img src={optImg} alt="" style={{ width: 'min(140px, 40%)', height: 90, padding: 4, objectFit: 'contain', borderRadius: 4, flexShrink: 0, background: 'var(--color-surface)', border: '1px solid var(--color-border-light)', boxSizing: 'border-box' }} />}
                         <span style={{ flex: 1, fontSize: '0.92rem', fontWeight: isSelected ? 600 : 400 }}>{opt.text}</span>
                         {showResults && (
                           <div style={{ textAlign: 'right', flexShrink: 0 }}>

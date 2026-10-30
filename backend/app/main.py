@@ -630,7 +630,7 @@ def on_startup():
         except Exception as e:
             print(f"[meeting_transcripts.recording_id migration] skipped: {e}")
 
-        # ── Surveys: widen survey_questions.question_type to include matrix ──
+        # ── Surveys: widen survey_questions.question_type to include matrix + nps ──
         try:
             insp = inspect(engine)
             if "survey_questions" in insp.get_table_names():
@@ -639,7 +639,7 @@ def on_startup():
                         "ALTER TABLE survey_questions MODIFY COLUMN question_type ENUM("
                         "'text','textarea','number','select','multi_select','radio','checkbox',"
                         "'rating','date','email','phone','url','time','yes_no','linear_scale',"
-                        "'file_upload','section_header','page_break','matrix') NOT NULL"
+                        "'file_upload','section_header','page_break','matrix','nps') NOT NULL"
                     ))
         except Exception as e:
             print(f"[survey_questions.question_type enum widening] skipped: {e}")

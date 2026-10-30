@@ -104,3 +104,14 @@ WHERE NOT EXISTS (SELECT 1 FROM kol_pending p WHERE p.user_id = @owner_id AND (
 -- Columns it adds (for reference; the backend also adds them on start):
 -- ALTER TABLE assessment_parameters ADD COLUMN score_group VARCHAR(50) NULL;
 -- ALTER TABLE assessment_parameters ADD COLUMN group_max_score FLOAT NULL;
+
+-- =====================================================================
+-- 2026-10-30 · Surveys: Net Promoter Score question type
+-- =====================================================================
+-- Auto-applied when the backend starts (app/main.py); only needed by hand if that
+-- step logged "[survey_questions.question_type enum widening] skipped". Safe to run
+-- twice. Existing questions and answers are untouched.
+-- ALTER TABLE survey_questions MODIFY COLUMN question_type ENUM(
+--   'text','textarea','number','select','multi_select','radio','checkbox',
+--   'rating','date','email','phone','url','time','yes_no','linear_scale',
+--   'file_upload','section_header','page_break','matrix','nps') NOT NULL;

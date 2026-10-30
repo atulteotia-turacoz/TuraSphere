@@ -8,7 +8,7 @@ import {
   PenLine, MessageSquare, BookOpen, MoveVertical, Files, Star, PlusCircle,
   ArrowUp, ArrowDown, Edit3, ClipboardPaste,
   CheckSquare, ChevronsUpDown, Table, Grid3x3, BarChart3, RectangleHorizontal,
-  AlignJustify, User, Mail, Phone, MapPin, Calendar, FileText,
+  AlignJustify, User, Mail, Phone, MapPin, Calendar, FileText, Gauge,
 } from 'lucide-react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -20,6 +20,9 @@ const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 const BACKEND_URL = API_BASE.replace('/api/v1', '');
 
 const NEEDS_OPTIONS = ['select', 'multi_select', 'radio', 'checkbox'];
+
+// Standard NPS wording, pre-filled when the author picks the type on an empty question.
+const NPS_DEFAULT_LABEL = 'How likely are you to recommend us to a friend or colleague?';
 
 // Full rich-text ribbon for the "Add content → Text" block (section_header). Matches
 // the toolbar shown in the design: font, size/heading, B/I/U/S, colour & highlight,
@@ -53,6 +56,7 @@ const QUESTION_TYPE_GRID = [
   ]},
   { group: 'Rating', items: [
     { label: 'Star rating', icon: Star, type: 'rating' },
+    { label: 'Net Promoter Score (NPS)', icon: Gauge, type: 'nps' },
     { label: 'Slider', icon: SlidersHorizontal, type: 'linear_scale' }, // ~ 1–10 scale
     { label: 'Ranking', icon: ListOrdered, type: 'multi_select' },      // ~ multi-select
     { label: 'Matrix / Rating scale', icon: Grid3x3, type: 'matrix' },
@@ -386,6 +390,17 @@ function QuestionPreview({ q, qNum, isSectionHeader, isPageBreak }) {
     body = <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{Array.from({ length: 10 }, (_, i) => (
       <span key={i} style={{ width: 30, height: 30, borderRadius: '50%', border: '1px solid var(--color-border-strong)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>{i + 1}</span>
     ))}</div>;
+  } else if (t === 'nps') {
+    body = (
+      <div style={{ maxWidth: 440 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{Array.from({ length: 11 }, (_, i) => (
+          <span key={i} style={{ width: 30, height: 30, borderRadius: '50%', border: '1px solid var(--color-border-strong)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>{i}</span>
+        ))}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: '0.78rem', color: 'var(--color-text-light)' }}>
+          <span>Not at all likely</span><span>Extremely likely</span>
+        </div>
+      </div>
+    );
   } else if (t === 'matrix') {
     const rows = Array.isArray(q.options?.rows) ? q.options.rows : [];
     const cols = Array.isArray(q.options?.columns) ? q.options.columns : [];
@@ -685,13 +700,14 @@ export default function SurveyEditPage() {
   const handleTypeChange = (qIdx, newType) => {
     setQuestions(prev => prev.map((q, i) => {
       if (i !== qIdx) return q;
+      const label = newType === 'nps' && !q.label.trim() ? NPS_DEFAULT_LABEL : q.label;
       if (newType === 'matrix' && !Array.isArray(q.options?.rows)) {
         return { ...q, question_type: newType, go_to: null, options: { rows: [''], columns: ['', ''], multi_select: false } };
       }
       if (q.question_type === 'matrix' && newType !== 'matrix') {
-        return { ...q, question_type: newType, options: [] };
+        return { ...q, label, question_type: newType, options: [] };
       }
-      return { ...q, question_type: newType };
+      return { ...q, label, question_type: newType };
     }));
   };
   const moveQuestion = (idx, dir) => {
@@ -984,6 +1000,13 @@ export default function SurveyEditPage() {
                     );
                   })}
                 </div>
+              )}
+
+              {/* NPS — fixed 0–10 scale, so there is nothing to configure */}
+              {q.question_type === 'nps' && (
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', margin: 0 }}>
+                  Respondents pick a score from 0 to 10. Results show the NPS: % promoters (9–10) minus % detractors (0–6), from −100 to +100.
+                </p>
               )}
 
               {/* Matrix */}

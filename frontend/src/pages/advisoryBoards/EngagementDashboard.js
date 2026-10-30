@@ -3,6 +3,7 @@ import {
   Loader, Users, Eye, EyeOff, CheckCircle2, Clock, MessageSquare,
   ClipboardList, MapPin, Calendar, ExternalLink, BookOpen, AlertTriangle,
 } from 'lucide-react';
+import NpsSummary from '../../components/NpsSummary';
 
 // The dashboard for the manager / organiser / Turacoz and the client, to the
 // spec in "KOL dashboard Advisory Board-Dr Shruti".
@@ -310,7 +311,8 @@ export function SurveyResults({ surveys, renderActions }) {
                 <span style={{ color: 'var(--color-text-light)' }}>Q{q.number || qi + 1}.</span> {q.label}
               </div>
               <div style={{ ...muted, fontSize: '0.73rem', marginBottom: 5 }}>{q.answered_count} answered</div>
-              {q.options.map(o => {
+              {q.nps?.total > 0 && <NpsSummary nps={q.nps} />}
+              {!q.nps && q.options.map(o => {
                 const pct = q.answered_count ? Math.round(100 * o.count / q.answered_count) : 0;
                 return (
                   <div key={o.label} style={{ marginBottom: 5 }}>

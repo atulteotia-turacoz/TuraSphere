@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trash2, Download, AlertCircle, BarChart3, Users, Calendar, Mail, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import { getSurveyResults, deleteSurveyResponse } from '../services/api';
+import NpsSummary from '../components/NpsSummary';
 // Shared with the client portal's Survey Results tab — one CSV implementation.
 import { formatAnswer, orderedAnswerKeys, downloadSurveyCsv } from '../utils/surveyCsv';
 
@@ -115,6 +116,13 @@ export default function SurveyResultsPage() {
           </div>
         </div>
       </div>
+
+      {/* NPS — a question nobody has answered yet has no score to show */}
+      {(data?.nps || []).filter(n => n.total > 0).map(n => (
+        <div key={n.question_id} className="card" style={{ marginBottom: 20, padding: '20px 24px' }}>
+          <NpsSummary nps={n} title={n.label} />
+        </div>
+      ))}
 
       {/* No responses */}
       {!data?.responses.length ? (

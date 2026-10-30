@@ -22,6 +22,10 @@ import EngagementDashboard, { SurveyResults } from './advisoryBoards/EngagementD
 import SessionDiscussion from './advisoryBoards/SessionDiscussion';
 import DocumentPreviewModal, { groupBySection } from '../components/common/DocumentPreviewModal';
 
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const BACKEND_URL = API_BASE.replace('/api/v1', '');
+const resolveImg = (url) => (!url ? null : url.startsWith('http') ? url : `${BACKEND_URL}${url}`);
+
 // Scoped to this page. Media queries, hover and keyframes can't be expressed
 // as inline styles, and all three are needed here. Mirrors the participant
 // portal's shell so a client and an expert see one product, not two.
@@ -377,7 +381,11 @@ function RoomPolls({ token, meetingId }) {
                   return (
                     <div key={oi} style={{ marginBottom: 4 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem' }}>
-                        <span>{o.text}</span><span style={{ color: 'var(--color-text-secondary)' }}>{n} · {pct}%</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          {o.image && <img src={resolveImg(o.image)} alt="" style={{ width: 60, height: 34, padding: 2, objectFit: 'contain', borderRadius: 4, flexShrink: 0, background: 'var(--color-surface)', border: '1px solid var(--color-border-light)', boxSizing: 'border-box' }} />}
+                          {o.text}
+                        </span>
+                        <span style={{ color: 'var(--color-text-secondary)', flexShrink: 0 }}>{n} · {pct}%</span>
                       </div>
                       <div style={{ height: 5, borderRadius: 3, background: 'var(--color-surface-raised)' }}>
                         <div style={{ width: `${pct}%`, height: '100%', borderRadius: 3, background: 'var(--color-primary)' }} />

@@ -25,6 +25,7 @@ class QuestionType(str, enum.Enum):
     section_header = "section_header"
     page_break = "page_break"
     matrix = "matrix"  # Likert-style grid: rows (statements) × columns (choices), one radio per row
+    nps = "nps"  # Net Promoter Score: 0-10 "how likely to recommend"; scored in services/survey_nps.py
 
 
 class SurveyStatus(str, enum.Enum):

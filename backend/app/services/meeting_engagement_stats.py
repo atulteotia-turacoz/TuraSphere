@@ -41,6 +41,7 @@ from app.models.meeting_session_comment import MeetingSessionComment
 from app.services import session_discussion
 from app.models.meeting_engagement import MeetingSurvey
 from app.models.survey import SurveyQuestion, SurveyResponse, SurveyAnswer
+from app.services.survey_nps import nps_summary
 
 
 def _enum_value(v):
@@ -366,7 +367,7 @@ def build_engagement(db: Session, meeting: BoardMeeting) -> dict:
                     for part in [p.strip() for p in val.split(",")] if "," in val else [val]:
                         if part:
                             tally[part] = tally.get(part, 0) + 1
-            q_rows.append({
+            q_row = {
                 "id": q.id,
                 # Plain text, not the stored HTML — see _plain_text.
                 "label": _plain_text(q.label),
@@ -377,7 +378,10 @@ def build_engagement(db: Session, meeting: BoardMeeting) -> dict:
                     key=lambda o: (-o["count"], o["label"]),
                 ),
                 "text_answers": texts,
-            })
+            }
+            if _enum_value(q.question_type) == "nps":
+                q_row["nps"] = nps_summary(a.answer_text for a in rows)
+            q_rows.append(q_row)
 
         for i, row in enumerate(q_rows, start=1):
             row["number"] = i

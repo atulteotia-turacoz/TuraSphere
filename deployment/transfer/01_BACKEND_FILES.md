@@ -208,3 +208,19 @@ The live app is `turasphere.com`, with LiveKit at `wss://livekit.turasphere.com`
 | `docker-compose.yml` (git-ignored, edit the server copy by hand) | `livekit/livekit-server:v1.13.9`, matching the live server. |
 | `infra/turn-preflight.sh`, `infra/livekit-diag.sh` | TURN host `turn.turasphere.com`; run-from path is now "the folder with docker-compose.yml" instead of the old turacoz path. |
 | `deployment/LIVEKIT_PRODUCTION.md` | All app / LiveKit / TURN hostnames use `turasphere.com`. §12 finds the compose folder from the running LiveKit container instead of a hard-coded path. |
+
+## Surveys — Net Promoter Score (NPS) question type (2026-10-30)
+
+New `nps` question type: respondents pick 0-10, and the results show the score (% promoters 9-10 minus % detractors 0-6, from -100 to +100). Only completed responses count. The same calculation feeds the team's Survey Results page and the engagement dashboard (organizer and client portal).
+
+**Schema:** `survey_questions.question_type` gains the ENUM value `nps`. The backend applies this itself on start. **Deploy the backend before the frontend:** until the column is widened, saving a survey with an NPS question fails. The SQL is in `04_DATABASE_QUERIES.sql` if you want to run it by hand.
+
+| File | Change |
+|---|---|
+| `backend/app/services/survey_nps.py` | **New.** `nps_summary(answers)`: score, total, detractors, passives, promoters and the count per score. Blank or invalid answers are ignored. `score` is `null` when nobody has answered, because 0 is a real result. |
+| `backend/app/models/survey.py` | `QuestionType.nps`. |
+| `backend/app/main.py` | The startup `question_type` ENUM widening now includes `nps`. |
+| `backend/app/api/endpoints/surveys.py` | `GET /surveys/{id}/results` returns a new `nps` list, one entry per NPS question. New `_nps_results` helper. |
+| `backend/app/services/meeting_engagement_stats.py` | Engagement survey rows for an NPS question carry an `nps` block. |
+| `backend/tests/test_survey_nps.py` | **New.** Band edges, score, 0 as an answer, no answers, invalid answers. |
+| `deployment/transfer/fix_missing_columns.sql` | `question_type` ENUM includes `nps`. |

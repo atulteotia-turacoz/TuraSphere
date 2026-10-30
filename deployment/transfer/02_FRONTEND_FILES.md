@@ -82,3 +82,27 @@ Needs the server fix from `01_BACKEND_FILES.md` (2026-10-29): the backend must h
 | File | Change |
 |---|---|
 | `frontend/src/pages/advisoryBoards/LiveKitRoom.js` | `room.connect` always passes `rtcConfig: { iceTransportPolicy: 'relay' }` unless the page URL has `relay=0`. |
+
+## Surveys — Net Promoter Score (NPS) question type (2026-10-30)
+
+Goes with the backend change (see `01_BACKEND_FILES.md`, same date). **Deploy the backend first.**
+
+"Net Promoter Score (NPS)" is in the Rating group of the question type picker. Picking it on an empty question fills in the standard wording, which the author can edit. Respondents see 0-10 on one row at every screen width, in one neutral colour so the buttons don't steer the answer. The "Not at all likely" / "Extremely likely" labels follow the survey's language (English, Spanish, French, German). Skip logic works as on other scale questions: one "Any answer" rule.
+
+| File | Change |
+|---|---|
+| `frontend/src/components/NpsSummary.js` | **New.** Score, share of detractors / passives / promoters, and answers per score. Used by both results views. |
+| `frontend/src/pages/SurveyEditPage.js` | NPS in `QUESTION_TYPE_GRID`, `NPS_DEFAULT_LABEL`, label pre-fill in `handleTypeChange`, preview in `QuestionPreview`, note in the Edit tab. |
+| `frontend/src/pages/PublicSurveyPage.js` | New `NpsInput`. `npsLow` / `npsHigh` in `UI_STRINGS`. `QuestionRenderer` takes `t`. |
+| `frontend/src/pages/SurveyResultsPage.js` | An NPS card above the responses for each answered NPS question. |
+| `frontend/src/pages/advisoryBoards/EngagementDashboard.js` | `SurveyResults` shows `NpsSummary` for NPS questions instead of the option list (organizer dashboard and client portal). |
+
+## Polling — images on answer options (2026-10-30)
+
+Each option in the Create and Edit poll forms has an image button: upload, preview, remove. An option can be text, image, or both. An image-only option is saved with the label "Option A", "Option B" and so on, so results, the vote table and the CSV always have a name for it. Editing a poll used to drop any option images; it now keeps them. Images appear on the public poll, in the poll results and in the client portal's live polls. Each sits in a fixed-size box (public poll 140×90, narrower on phones; results 72×40; portal 60×34) and scales to fit it whole, never cropped, so options line up whatever size was uploaded. Frontend only: `polls.questions` already stored `{text, image}`, and upload uses the existing `POST /surveys/upload-image`. No backend or database change.
+
+| File | Change |
+|---|---|
+| `frontend/src/pages/PollingPage.js` | New `OptionImageButton`. Options are `{text, image}` in form state. New `serializeOptions`, `optionHasContent`, `normalizeOption`. Results show a thumbnail per option. |
+| `frontend/src/pages/PublicPollPage.js` | Option image in a fixed box with `object-fit: contain`. |
+| `frontend/src/pages/PublicClientPortalPage.js` | `RoomPolls` shows a thumbnail per option. New `resolveImg`. |
